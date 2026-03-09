@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docs.anthropic.com)",
+      "Skill(file-report)",
+      "Bash(python3:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(strings:*)"
+    ]
+  }
+}
