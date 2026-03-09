@@ -1,4 +1,5 @@
 # Claude Code 機制分析
+<!-- Edit tool test OK -->
 
 ## 1. Deferred Tools（延遲載入工具）
 
@@ -6,6 +7,45 @@ Claude Code 的工具預設是 **deferred** 狀態，不會在對話開始時全
 
 - 好處：節省 token（工具 schema 很長，全部預載會消耗大量 context）
 - 代價：使用前需先透過 ToolSearch 載入，多一個 round trip
+
+### 完整工具清單
+
+工具分三類：
+- **系統預載（Pre-loaded）**：schema 已在 context 中，可直接呼叫，共 9 個
+- **Deferred**：schema 未在 context 中，需先用 ToolSearch 載入（系統以 `<available-deferred-tools>` 標記），共 16 個
+- **MCP 工具**：由外部 MCP server 提供，格式為 `mcp__{server}__{tool}`，不在 deferred 列表，視環境而定是否可用
+
+| 工具 | 類型 | 作用 |
+|------|------|------|
+| **Read** | 預載 | 讀取本地檔案內容 |
+| **Edit** | 預載 | 對檔案進行精確字串替換編輯 |
+| **Write** | 預載 | 寫入/覆蓋整個檔案 |
+| **Bash** | 預載 | 執行 shell 命令（支援 `run_in_background`，完成後以 `<task-notification>` 通知） |
+| **Glob** | 預載 | 用 glob pattern 搜尋檔案路徑 |
+| **Grep** | 預載 | 用 regex 搜尋檔案內容（ripgrep） |
+| **Agent** | 預載 | 啟動子 agent 處理複雜任務（general-purpose / Explore / Plan 等） |
+| **ToolSearch** | 預載 | 載入 deferred 工具（元工具）；可一次載入多個：`select:A,B,C` |
+| **Skill** | 預載 | 執行 `.claude/skills/` 下定義的 skill |
+| **AskUserQuestion** | Deferred | 主動向使用者提問 |
+| **WebFetch** | Deferred | 抓取指定 URL 的網頁內容 |
+| **WebSearch** | Deferred | 搜尋網路 |
+| **NotebookEdit** | Deferred | 編輯 Jupyter notebook（`.ipynb` 檔案必須用此工具，Edit 會報錯） |
+| **EnterPlanMode** | Deferred | 進入 Plan 模式；Write 可存計畫至 `~/.claude/plans/{slug}.md` |
+| **ExitPlanMode** | Deferred | 離開 Plan 模式，提交計畫讓使用者審核 |
+| **EnterWorktree** | Deferred | 在 `.claude/worktrees/{name}` 建立 git worktree 隔離環境 |
+| **TaskCreate** | Deferred | 建立使用者任務（ID 為數字，如 `1`） |
+| **TaskGet** | Deferred | 取得任務詳情 |
+| **TaskList** | Deferred | 列出所有使用者任務 |
+| **TaskUpdate** | Deferred | 更新使用者任務狀態 |
+| **TaskStop** | Deferred | 停止**背景 Bash 任務**（ID 為 hash，如 `bz6rlnhqb`）；無法停止 TaskCreate 任務 |
+| **TaskOutput** | Deferred | 讀取背景 Bash 任務輸出 |
+| **CronCreate** | Deferred | 建立定時排程（session-only，Claude 退出後消失） |
+| **CronDelete** | Deferred | 刪除排程 |
+| **CronList** | Deferred | 列出所有排程 |
+| **mcp__ide__getDiagnostics** | MCP | 取得 IDE 診斷資訊（lint/type 錯誤等） |
+| **mcp__ide__executeCode** | MCP | 在 IDE 執行程式碼 |
+
+來源：`b360f366...jsonl`（完整工具調用測試）
 
 ### 工具載入流程
 
@@ -118,10 +158,48 @@ Claude Code 將每次對話儲存為 JSONL 檔，每行一個 JSON 物件。
 
 | type | 說明 |
 |------|------|
-| `file-history-snapshot` | 對話開始時的檔案狀態快照 |
-| `user` | 使用者訊息（含 `isMeta: true` 的 skill 注入） |
+| `file-history-snapshot` | 檔案狀態快照（長 session 可出現多次，6370316b 有 65 條） |
+| `user` | 使用者訊息（含 `isMeta: true` 的 skill 注入，也含 tool_result） |
 | `assistant` | Claude 回應（含 tool_use、thinking、text） |
-| `progress` | 背景進度事件（如 hook 觸發） |
+| `progress` | 背景進度事件，不進入 LLM context（見下方） |
+| `system` | 系統事件，如 turn_duration（見下方） |
+
+### progress 記錄子類型
+
+`progress` 記錄的 `data.type` 欄位說明：
+
+| data.type | 說明 | 關鍵欄位 |
+|-----------|------|---------|
+| `hook_progress` | Hook 執行事件 | `hookName`（如 `PostToolUse:Read`） |
+| `bash_progress` | Bash 命令執行中輸出 | `output`/`fullOutput`、`elapsed` |
+
+來源：`6370316b...jsonl`（含兩種 progress 類型）
+
+### system 記錄
+
+`system` 記錄目前已知的子類型：
+
+| subtype | 說明 | 關鍵欄位 |
+|---------|------|---------|
+| `turn_duration` | 記錄一個 turn 的耗時 | `durationMs`、`slug` |
+
+`slug` 是 session 的人類可讀名稱（例如 `noble-wiggling-squid`），由 Claude Code 自動生成。
+
+來源：`6370316b...jsonl`
+
+### toolUseResult 的兩種格式
+
+`toolUseResult` 欄位通常為 dict，但在錯誤情況下（如 Read 超過 token 上限）會變成純字串：
+
+```json
+// 正常情況（dict）
+"toolUseResult": { "stdout": "...", "stderr": "", "exitCode": 0 }
+
+// 錯誤情況（string）
+"toolUseResult": "Error: File content (86071 tokens) exceeds maximum allowed tokens (25000)..."
+```
+
+來源：`6370316b...jsonl`（Read 工具超過 25000 token 限制時觸發）
 
 ### 同一 message ID 可能出現在多條記錄
 
