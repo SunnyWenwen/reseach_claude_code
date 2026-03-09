@@ -80,7 +80,8 @@ def main():
     tool_calls = []
     errors = []
     hooks = []
-    messages_summary = []
+    messages_summary = []       # short version (for LLM stdout)
+    messages_full = []          # full version (for human txt file)
     request_count = 0
 
     # Track processed message IDs for token dedup (usage counted once per message ID)
@@ -101,6 +102,15 @@ def main():
             cwd = rec.get("cwd", "")
             version = rec.get("version", "")
 
+        # System records (turn_duration etc.)
+        if rec_type == "system":
+            subtype = rec.get("subtype", "")
+            if subtype == "turn_duration":
+                dur_ms = rec.get("durationMs", 0)
+                slug = rec.get("slug", "")
+                messages_summary.append(f"[{fmt_time(ts)}] SYSTEM(turn_duration): {dur_ms}ms slug={slug}")
+                messages_full.append(f"[{fmt_time(ts)}] SYSTEM(turn_duration): {dur_ms}ms slug={slug}")
+
         # User messages
         if rec_type == "user" and not rec.get("isMeta") and not rec.get("toolUseResult"):
             msg = rec.get("message", {})
@@ -108,6 +118,7 @@ def main():
             text = extract_content_text(content)
             if text:
                 messages_summary.append(f"[{fmt_time(ts)}] USER: {text}")
+                messages_full.append(f"[{fmt_time(ts)}] USER: {text}")
 
         # Meta messages (skill injection)
         elif rec_type == "user" and rec.get("isMeta"):
@@ -115,6 +126,7 @@ def main():
             content = msg.get("content", "")
             text = extract_content_text(content)
             messages_summary.append(f"[{fmt_time(ts)}] META(skill): {truncate(text, 80)}")
+            messages_full.append(f"[{fmt_time(ts)}] META(skill): {truncate(text, 80)}")
 
         # Assistant messages - process ALL records (same msg ID may appear in multiple records)
         elif rec_type == "assistant":
@@ -143,40 +155,67 @@ def main():
                     text = truncate(item.get("text", ""))
                     if text:
                         messages_summary.append(f"[{fmt_time(ts)}] ASSISTANT: {text}")
+                        messages_full.append(f"[{fmt_time(ts)}] ASSISTANT: {truncate(item.get('text',''), 500)}")
                 elif itype == "tool_use":
                     tool_id = item.get("id", "")
                     if tool_id in seen_tool_use_ids:
                         continue
                     seen_tool_use_ids.add(tool_id)
                     tool_name = item.get("name", "")
-                    tool_input = truncate(json.dumps(item.get("input", {}), ensure_ascii=False), 150)
+                    tool_input_short = truncate(json.dumps(item.get("input", {}), ensure_ascii=False), 150)
+                    tool_input_full  = truncate(json.dumps(item.get("input", {}), ensure_ascii=False), 1000)
                     tool_calls.append({
                         "id": tool_id,
                         "name": tool_name,
-                        "input": tool_input,
+                        "input": tool_input_short,
                         "time": fmt_time(ts),
                     })
-                    messages_summary.append(f"[{fmt_time(ts)}] TOOL_CALL: {tool_name}({tool_input})")
+                    messages_summary.append(f"[{fmt_time(ts)}] TOOL_CALL: {tool_name}({tool_input_short})")
+                    messages_full.append(f"[{fmt_time(ts)}] TOOL_CALL: {tool_name}({tool_input_full})")
                 elif itype == "thinking":
                     thinking = item.get("thinking", "")
                     if thinking:
                         display = truncate(thinking, 80)
+                        display_full = truncate(thinking, 300)
                     elif item.get("signature"):
-                        display = "(encrypted)"
+                        display = display_full = "(encrypted)"
                     else:
                         continue
                     messages_summary.append(f"[{fmt_time(ts)}] THINKING: {display}")
+                    messages_full.append(f"[{fmt_time(ts)}] THINKING: {display_full}")
 
-        # Progress / hooks
+        # Progress / hooks / bash
         elif rec_type == "progress":
             data = rec.get("data", {})
-            hook_name = data.get("hookName", "")
-            if hook_name:
-                hooks.append(f"[{fmt_time(ts)}] {hook_name}")
+            if not isinstance(data, dict):
+                continue
+            prog_type = data.get("type", "")
+            if prog_type == "hook_progress":
+                hook_name = data.get("hookName", "")
+                if hook_name:
+                    hooks.append(f"[{fmt_time(ts)}] {hook_name}")
+            elif prog_type == "bash_progress":
+                output = data.get("output", "") or data.get("fullOutput", "")
+                elapsed = data.get("elapsed", data.get("elapse", ""))
+                if output:
+                    entry = f"[{fmt_time(ts)}] BASH_PROGRESS: {truncate(output, 80)} ({elapsed}ms)"
+                    messages_summary.append(entry)
+                    messages_full.append(entry)
 
         # Tool results
-        if rec.get("toolUseResult"):
-            result = rec.get("toolUseResult", {})
+        if rec.get("toolUseResult") is not None:
+            result = rec.get("toolUseResult")
+            # toolUseResult can be a string (error case) or dict
+            if isinstance(result, str):
+                is_error = True
+                stderr_text = result
+            elif isinstance(result, dict):
+                is_error = bool(result.get("stderr")) or result.get("is_error", False)
+                stderr_text = result.get("stderr", "")
+            else:
+                is_error = False
+                stderr_text = ""
+
             msg = rec.get("message", {})
             content = msg.get("content", [])
             if isinstance(content, list):
@@ -185,16 +224,29 @@ def main():
                         tool_id_ref = item.get("tool_use_id", "")
                         raw_content = item.get("content", "")
                         if isinstance(raw_content, list):
-                            raw_content = " ".join(
-                                str(x.get("text","") or x.get("tool_name",""))
-                                for x in raw_content if isinstance(x, dict)
-                            )
-                        result_text = truncate(str(raw_content), 150)
-                        is_error = bool(result.get("stderr")) or result.get("is_error", False)
+                            parts_rc = []
+                            for x in raw_content:
+                                if not isinstance(x, dict):
+                                    continue
+                                if x.get("type") == "tool_reference":
+                                    parts_rc.append(f"[tool_reference: {x.get('tool_name','')}]")
+                                elif x.get("text"):
+                                    parts_rc.append(x["text"])
+                                elif x.get("tool_name"):
+                                    parts_rc.append(x["tool_name"])
+                            raw_content = " ".join(parts_rc)
+                        # If content is empty but we have a string toolUseResult, use it
+                        if not raw_content and isinstance(result, str):
+                            raw_content = result
+                        raw_str = str(raw_content)
+                        result_short = truncate(raw_str, 150)
+                        result_full  = truncate(raw_str, 2000)
                         prefix = "TOOL_ERROR" if is_error else "TOOL_RESULT"
-                        messages_summary.append(f"[{fmt_time(ts)}] {prefix}[{tool_id_ref[:12]}]: {result_text}")
+                        messages_summary.append(f"[{fmt_time(ts)}] {prefix}[{tool_id_ref[:12]}]: {result_short}")
+                        messages_full.append(f"[{fmt_time(ts)}] {prefix}[{tool_id_ref[:12]}]:\n{result_full}\n")
                         if is_error:
-                            errors.append(f"{tool_id_ref[:12]}: {result_text}")
+                            err_msg = stderr_text or result_short
+                            errors.append(f"{tool_id_ref[:12]}: {truncate(err_msg, 150)}")
 
     # --- Duration ---
     duration_str = "unknown"
@@ -256,7 +308,26 @@ def main():
     lines.append("")
     lines.append("=" * 60)
 
+    # Full version for txt file (TOOL_RESULT shown completely)
+    lines_full = lines[:-len(messages_summary)-3]  # reuse header/stats section
+    lines_full = []
+    for l in lines:
+        if l.strip().startswith("[") and "TOOL_RESULT" not in l and "TOOL_ERROR" not in l:
+            lines_full.append(l)
+        elif not l.strip().startswith("["):
+            lines_full.append(l)
+    # Rebuild full version properly
+    lines_full = list(lines)  # copy header+stats as-is
+    # Replace message flow section
+    flow_start = lines_full.index("--- Message Flow ---")
+    lines_full = lines_full[:flow_start+1]
+    for line in messages_full:
+        lines_full.append(f"  {line}")
+    lines_full.append("")
+    lines_full.append("=" * 60)
+
     output = "\n".join(lines)
+    output_full = "\n".join(lines_full)
 
     # --- Print to stdout ---
     print(output)
@@ -278,7 +349,7 @@ def main():
     fname = (session_id or os.path.splitext(os.path.basename(path))[0]) + ".txt"
     out_path = os.path.join(out_dir, fname)
     with open(out_path, "w", encoding="utf-8") as f:
-        f.write(output + "\n")
+        f.write(output_full + "\n")
     print(f"\n[Saved to: {out_path}]", file=sys.stderr)
 
 if __name__ == "__main__":

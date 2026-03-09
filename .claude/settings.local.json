@@ -6,7 +6,10 @@
       "Bash(python3:*)",
       "Bash(ls:*)",
       "Bash(grep:*)",
-      "Bash(strings:*)"
+      "Bash(strings:*)",
+      "WebSearch",
+      "mcp__ide__getDiagnostics",
+      "mcp__ide__executeCode"
     ]
   }
 }
