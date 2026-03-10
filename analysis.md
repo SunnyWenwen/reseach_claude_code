@@ -172,8 +172,9 @@ Claude Code 將每次對話儲存為 JSONL 檔，每行一個 JSON 物件。
 |-----------|------|---------|
 | `hook_progress` | Hook 執行事件 | `hookName`（如 `PostToolUse:Read`） |
 | `bash_progress` | Bash 命令執行中輸出 | `output`/`fullOutput`、`elapsed` |
+| `agent_progress` | Subagent 每一步操作回報 | `agentId`、`message`（含 subagent 的 tool_use/tool_result）、`parentToolUseID` |
 
-來源：`6370316b...jsonl`（含兩種 progress 類型）
+來源：`6370316b...jsonl`（hook/bash）、`00bbda8a...jsonl`（agent_progress）
 
 ### system 記錄
 
@@ -240,6 +241,70 @@ Claude Code 將每次對話儲存為 JSONL 檔，每行一個 JSON 物件。
 ```js
 // binary 原始定義
 nv1 = { local_bash:"b", local_agent:"a", remote_agent:"r", in_process_teammate:"t" }
+```
+
+### Agent tool 的 subagent_type
+
+透過 `Agent` 工具呼叫子 agent 時，可指定 `subagent_type`（共 5 種）：
+
+| subagent_type | 可用工具 | 說明 |
+|---------------|----------|------|
+| `general-purpose` | 全部（`*`） | 通用型，適合複雜多步驟任務 |
+| `statusline-setup` | Read、Edit | 專門設定 Claude Code 狀態列 |
+| `Explore` | 除 Agent、ExitPlanMode、Edit、Write、NotebookEdit | 快速探索 codebase；支援 quick / medium / very thorough 三種深度 |
+| `Plan` | 除 Agent、ExitPlanMode、Edit、Write、NotebookEdit | 軟體架構規劃，回傳實作計畫 |
+| `claude-code-guide` | Glob、Grep、Read、WebFetch、WebSearch | 回答 Claude Code / SDK / API 問題；支援 `resume` 繼續前次 agent |
+
+來源：`b360f366...jsonl`（使用 Explore 子 agent）；subagent_type 清單來自系統 prompt
+
+### Subagent 運作特性
+
+| 特性 | 說明 |
+|------|------|
+| **獨立 context** | 每個 subagent 有自己的 context window，不共享主 agent 對話歷史 |
+| **工具隔離** | 每種 subagent_type 有各自的工具白名單，無法呼叫白名單外的工具 |
+| **agentId** | 呼叫後回傳 agentId（如 `aabcf4bda0b27ca01`，`a` 前綴 = `local_agent`），可用 `resume` 參數繼續 |
+| **結果回傳** | Subagent 完成後將結果作為 TOOL_RESULT 回傳給主 agent（含 totalDurationMs、totalTokens、totalToolUseCount） |
+| **不同 model** | Subagent 可能使用不同 model；Explore subagent 實測使用 `claude-haiku-4-5-20251001`，主 agent 為 `claude-sonnet-4-6` |
+| **無獨立 JSONL** | Subagent 活動**不**產生獨立 JSONL 檔案，全部以 `progress`（`data.type: "agent_progress"`）記錄在主 session JSONL |
+| **主 LLM 不可見細節** | Subagent 的 tool_use / tool_result 在 `progress` 記錄中（不進入主 LLM context），主 agent 只看到最終彙整結果 |
+
+來源：`00bbda8a...jsonl`（實測 Explore subagent）
+
+### agent_progress 記錄結構
+
+Subagent 每一步操作都透過 `agent_progress` 回報給主 session：
+
+```json
+{
+  "type": "progress",
+  "data": {
+    "type": "agent_progress",
+    "agentId": "aabcf4bda0b27ca01",
+    "message": {
+      "type": "assistant",          // 或 "user"（tool_result）
+      "message": { "model": "claude-haiku-4-5-20251001", "content": [...] }
+    }
+  },
+  "toolUseID": "agent_msg_...",
+  "parentToolUseID": "toolu_011re..."   // Agent tool call 的 ID
+}
+```
+
+### Agent tool 的 toolUseResult 結構
+
+Agent 工具完成後，toolUseResult 比一般工具更豐富：
+
+```json
+{
+  "status": "completed",
+  "agentId": "aabcf4bda0b27ca01",
+  "content": [{ "type": "text", "text": "..." }],
+  "totalDurationMs": 16247,
+  "totalTokens": 23272,
+  "totalToolUseCount": 5,
+  "usage": { ... }
+}
 ```
 
 ### Agent 間通訊協議

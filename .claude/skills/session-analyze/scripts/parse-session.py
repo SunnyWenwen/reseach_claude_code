@@ -184,7 +184,7 @@ def main():
                     messages_summary.append(f"[{fmt_time(ts)}] THINKING: {display}")
                     messages_full.append(f"[{fmt_time(ts)}] THINKING: {display_full}")
 
-        # Progress / hooks / bash
+        # Progress / hooks / bash / agent
         elif rec_type == "progress":
             data = rec.get("data", {})
             if not isinstance(data, dict):
@@ -201,6 +201,43 @@ def main():
                     entry = f"[{fmt_time(ts)}] BASH_PROGRESS: {truncate(output, 80)} ({elapsed}ms)"
                     messages_summary.append(entry)
                     messages_full.append(entry)
+            elif prog_type == "agent_progress":
+                agent_id = data.get("agentId", "")[:12]
+                inner_msg = data.get("message", {})
+                inner_type = inner_msg.get("type", "")
+                inner_content = inner_msg.get("message", {}).get("content", [])
+                inner_model = inner_msg.get("message", {}).get("model", "")
+                if inner_type == "assistant" and isinstance(inner_content, list):
+                    for item in inner_content:
+                        if not isinstance(item, dict):
+                            continue
+                        if item.get("type") == "tool_use":
+                            tool_id = item.get("id", "")
+                            if tool_id in seen_tool_use_ids:
+                                continue
+                            seen_tool_use_ids.add(tool_id)
+                            tname = item.get("name", "")
+                            tinput = truncate(json.dumps(item.get("input", {}), ensure_ascii=False), 120)
+                            model_tag = f"[{inner_model}] " if inner_model else ""
+                            entry_s = f"[{fmt_time(ts)}]   SUBAGENT[{agent_id}] {model_tag}TOOL_CALL: {tname}({tinput})"
+                            entry_f = f"[{fmt_time(ts)}]   SUBAGENT[{agent_id}] {model_tag}TOOL_CALL: {tname}({truncate(json.dumps(item.get('input',{}), ensure_ascii=False), 500)})"
+                            messages_summary.append(entry_s)
+                            messages_full.append(entry_f)
+                elif inner_type == "user" and isinstance(inner_content, list):
+                    for item in inner_content:
+                        if not isinstance(item, dict) or item.get("type") != "tool_result":
+                            continue
+                        tool_id_ref = item.get("tool_use_id", "")[:12]
+                        rc = item.get("content", "")
+                        if isinstance(rc, list):
+                            rc = " ".join(str(x.get("text", "")) for x in rc if isinstance(x, dict))
+                        rc_str = str(rc)
+                        is_err = item.get("is_error", False)
+                        prefix = "TOOL_ERROR" if is_err else "TOOL_RESULT"
+                        entry_s = f"[{fmt_time(ts)}]   SUBAGENT[{agent_id}] {prefix}[{tool_id_ref}]: {truncate(rc_str, 120)}"
+                        entry_f = f"[{fmt_time(ts)}]   SUBAGENT[{agent_id}] {prefix}[{tool_id_ref}]:\n{truncate(rc_str, 1000)}\n"
+                        messages_summary.append(entry_s)
+                        messages_full.append(entry_f)
 
         # Tool results
         if rec.get("toolUseResult") is not None:
