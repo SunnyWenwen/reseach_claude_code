@@ -267,9 +267,25 @@ nv1 = { local_bash:"b", local_agent:"a", remote_agent:"r", in_process_teammate:"
 | **結果回傳** | Subagent 完成後將結果作為 TOOL_RESULT 回傳給主 agent（含 totalDurationMs、totalTokens、totalToolUseCount） |
 | **不同 model** | Subagent 可能使用不同 model；Explore subagent 實測使用 `claude-haiku-4-5-20251001`，主 agent 為 `claude-sonnet-4-6` |
 | **無獨立 JSONL** | Subagent 活動**不**產生獨立 JSONL 檔案，全部以 `progress`（`data.type: "agent_progress"`）記錄在主 session JSONL |
-| **主 LLM 不可見細節** | Subagent 的 tool_use / tool_result 在 `progress` 記錄中（不進入主 LLM context），主 agent 只看到最終彙整結果 |
+| **主 LLM 不可見細節** | Subagent 的 tool_use / tool_result 在 `progress` 記錄中，主 agent 只看到最終彙整結果（間接證據：最終 assistant token 計數極低；直接驗證待補） |
 
 來源：`00bbda8a...jsonl`（實測 Explore subagent）
+
+### Console UI 渲染
+
+`agent_progress` 記錄在 console 以縮排樹狀結構即時呈現：
+
+```
+Explore(List files in project)
+  ⎿  Prompt: 列出...
+  ⎿  Bash(find /d/project/test_claude_skill ...)
+  ⎿  Read(/d/project/test_claude_skill/CLAUDE.md)
+  ⎿  Read(/d/project/test_claude_skill/analysis.md)
+  ⎿  Bash(ls -lah ...)
+  ⎿  Response: 完美。現在...
+```
+
+`⎿` 符號表示 subagent 的子操作，使用者可即時看到 subagent 執行進度，但主 LLM 只拿到最後的 Response 內容。
 
 ### agent_progress 記錄結構
 
