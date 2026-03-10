@@ -13,7 +13,7 @@ Claude Code 的工具預設是 **deferred** 狀態，不會在對話開始時全
 工具分三類：
 - **系統預載（Pre-loaded）**：schema 已在 context 中，可直接呼叫，共 9 個
 - **Deferred**：schema 未在 context 中，需先用 ToolSearch 載入（系統以 `<available-deferred-tools>` 標記），共 16 個
-- **MCP 工具**：由外部 MCP server 提供，格式為 `mcp__{server}__{tool}`，不在 deferred 列表，視環境而定是否可用
+- **MCP 工具**：由外部 MCP server 提供，格式為 `mcp__{server}__{tool}`；MCP server 連線時 schema 預載入 context（不經 ToolSearch），未連線時工具不存在
 
 | 工具 | 類型 | 作用 |
 |------|------|------|

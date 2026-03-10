@@ -15,3 +15,10 @@
 - 若有對應的 JSONL 檔案，優先使用 `/session-analyze <path>` 驗證實際行為
 - 發現描述與 JSONL 記錄不符時，以 JSONL 記錄為準並更新 `analysis.md`
 - 在 `analysis.md` 中記錄機制時，盡量附上觀察來源（例如：「來源：`5713c20a...jsonl`」）
+
+## session-analyze skill 維護規則
+
+使用 `/session-analyze` 分析 JSONL 時，若發現輸出中有**未被處理的記錄類型或欄位**（例如新的 `progress` 子類型、未知的 record type、或顯示異常的欄位），須同步更新：
+
+1. `.claude/skills/session-analyze/scripts/parse-session.py`：加入對應的解析邏輯
+2. `analysis.md`：補充該記錄類型的機制說明與來源
