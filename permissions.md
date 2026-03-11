@@ -164,3 +164,52 @@ git status && rm -rf /important-dir   # 前綴合法，後半危險
 1. **複合命令**：`ls ... && echo ... && ls ...`（`&&`/`||`/`;`/`|` 串接）
 2. **Windows 路徑**：可能因 tokenizer 解析失敗
 3. **解決方法**：改用 `"Bash"` 允許所有 Bash 指令，或接受上述限制
+
+---
+
+## Permission Modes（全域操作模式）
+
+與 `permissions.allow` 規則不同，Permission Mode 是**整體操作模式**，影響所有工具的行為。
+
+來源：binary `2.1.72`，`EXTERNAL_PERMISSION_MODES` / `INTERNAL_PERMISSION_MODES`
+
+### 模式清單
+
+| Mode | 對外暴露 | 說明 |
+|------|---------|------|
+| `default` | ✓ | 預設模式，需要確認的都會詢問 |
+| `acceptEdits` | ✓ | **Accept Edits 模式**：自動接受所有檔案編輯（Edit/Write/NotebookEdit），但 Bash 等副作用指令仍需確認 |
+| `bypassPermissions` | ✓ | 跳過所有工具權限確認（危險） |
+| `dontAsk` | ✓ | Don't Ask 模式，不詢問任何操作 |
+| `plan` | ✓ | Plan 模式（僅規劃，限制實際執行） |
+| `auto` | 內部 | 自動模式（`claude -p` 等非互動場合） |
+
+### acceptEdits vs permissions.allow 的差異
+
+| | `acceptEdits` 模式 | `permissions.allow` 規則 |
+|--|------------------|------------------------|
+| 作用範圍 | 全域，影響所有 session | 特定工具/命令 |
+| 設定粒度 | 粗（檔案操作 vs 副作用） | 細（可到單一命令） |
+| 持久性 | 可設為 session 預設或隨時切換 | 寫入 settings.json 持久 |
+| Bash 指令 | 仍需確認 | 可單獨允許特定命令 |
+
+### 設定方式
+
+- CLI 啟動時：`claude --permission-mode acceptEdits`
+- 互動中：UI 模式切換按鈕（status bar 符號 `⏵⏵`）
+
+---
+
+## 官方安全機制補充
+
+來源：官方文件 https://docs.anthropic.com/en/docs/claude-code/security
+
+### 額外保護
+
+| 機制 | 說明 |
+|------|------|
+| **寫入範圍限制** | Claude 只能寫入啟動時的工作目錄及其子目錄；可讀取範圍之外的檔案，但不能修改 |
+| **命令黑名單** | `curl`、`wget` 等高風險命令預設封鎖 |
+| **注入偵測** | 即使命令已在 allowlist，疑似 injection 的 Bash 命令仍強制詢問 |
+| **Fail-closed** | 無匹配規則的命令一律需要確認（不預設允許） |
+| `/sandbox` | 啟用沙箱模式：檔案系統 + 網路隔離 |

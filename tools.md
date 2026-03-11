@@ -99,7 +99,7 @@ flowchart TD
 
 | 工具 | 類型 | 權限 | 作用 |
 |------|------|------|------|
-| **Read** | 預載 | 自動允許 | 讀取本地檔案內容 |
+| **Read** | 預載 | 自動允許 | 讀取本地檔案內容；支援圖片（base64）、`.ipynb`（解析 cells）、PDF（`pages` 參數，最多 20 頁/次）；25,000 token 上限（超過回 error string，不截斷）；支援 `offset`/`limit` 分段讀取 |
 | **Glob** | 預載 | 自動允許 | 用 glob pattern 搜尋檔案路徑 |
 | **Grep** | 預載 | 自動允許 | 用 regex 搜尋檔案內容（ripgrep） |
 | **ToolSearch** | 預載 | 自動允許 | 載入 deferred 工具（見下方） |
@@ -107,8 +107,8 @@ flowchart TD
 | **TaskList** | Deferred | 自動允許 | 列出所有使用者任務 |
 | **TaskOutput** | Deferred | 自動允許 | 讀取背景 Bash 任務輸出 |
 | **CronList** | Deferred | 自動允許 | 列出所有排程 |
-| **Edit** | 預載 | ⚠️ 可設定 | 對檔案進行精確字串替換；設定：`Edit` |
-| **Write** | 預載 | ⚠️ 可設定 | 寫入/覆蓋整個檔案；設定：`Write` |
+| **Edit** | 預載 | ⚠️ 可設定 | 精確字串替換（old_string → new_string）；old_string 必須唯一，否則報錯；支援 `replace_all`；只傳 diff，token 消耗少；設定：`Edit` |
+| **Write** | 預載 | ⚠️ 可設定 | 覆寫整個檔案內容；適合新建檔或完整改寫；token 消耗多；設定：`Write` |
 | **Bash** | 預載 | ⚠️ 可設定 | 執行 shell 命令；支援 `run_in_background`（完成後以 `<task-notification>` 通知）；設定：`Bash(command:*)` |
 | **Agent** | 預載 | ⚠️ 可設定 | 啟動子 agent（見下方）；設定：`Agent` |
 | **Skill** | 預載 | ⚠️ 可設定 | 執行 skill（見下方）；設定：`Skill(skill-name)` |
@@ -128,6 +128,123 @@ flowchart TD
 | **mcp__ide__executeCode** | MCP | ⚠️ 可設定 | 在 IDE 執行程式碼；設定：`mcp__ide__executeCode` |
 
 來源：`b360f366...jsonl`（完整工具調用測試）
+
+---
+
+## 工具分類（依功能）
+
+除了 Pre-loaded/Deferred/MCP 分類，工具也可依**操作性質**分類：
+
+| 類型 | 工具 | 說明 |
+|------|------|------|
+| **唯讀** | Read, Glob, Grep, WebFetch, WebSearch, TaskGet, TaskList, TaskOutput, CronList, mcp__ide__getDiagnostics | 不修改任何狀態 |
+| **寫入** | Edit, Write, NotebookEdit | 修改本地檔案 |
+| **執行** | Bash | 執行任意 shell 命令 |
+| **規劃/隔離** | EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree | 切換操作模式或環境 |
+| **任務管理** | TaskCreate, TaskUpdate, TaskStop, CronCreate, CronDelete | 管理背景任務與排程 |
+| **互動/meta** | AskUserQuestion, ToolSearch, Skill, Agent | 和使用者/其他工具互動 |
+| **IDE** | mcp__ide__getDiagnostics, mcp__ide__executeCode | VS Code/JetBrains 整合 |
+
+來源：binary `2.1.72`，`filePatternTools: ["Read","Write","Edit","Glob","NotebookRead","NotebookEdit"]`（使用不同的匹配邏輯）
+
+---
+
+## 為何有 Read/Write 而不直接用 Bash
+
+Read/Write 不是 Bash 的語法糖，兩者在架構上有本質差異：
+
+| 面向 | Read/Write/Edit | Bash |
+|------|-----------------|------|
+| **權限粒度** | 預設 Read 自動允許；Write/Edit 分開設定 | 全部走 prefix/exact/wildcard 規則 |
+| **匹配邏輯** | `filePatternTools`（路徑型規則） | `bashPrefixTools`（命令型規則） |
+| **Token 限制** | Read 上限 25,000 tokens（超過回 error string） | 無強制限制 |
+| **Diff 計算** | Write/Edit 自動計算 structuredPatch + gitDiff 顯示給使用者 | 無 |
+| **寫入範圍** | 限制在工作目錄 + 子目錄（框架層強制） | 不限制 |
+| **特殊格式** | 圖片（base64 視覺理解）、`.ipynb`（解析 cells+outputs）、PDF（頁數分段） | 只有 raw bytes/text |
+| **預設權限** | Read 自動允許；Write 需確認 | 全部需確認 |
+
+Read/Write 讓 Claude Code 有「唯讀瀏覽」vs「寫入」的清晰權限界線，而不必所有檔案操作都要走 Bash confirm。
+
+### Write vs Edit
+
+| | Write | Edit |
+|--|-------|------|
+| **操作方式** | 覆寫整個檔案 | 精確字串替換（old_string → new_string） |
+| **適用情境** | 新建檔、完整改寫 | 修改現有檔案的一部分 |
+| **唯一性限制** | 無 | old_string 必須在檔案中唯一，否則報錯 |
+| **replace_all** | 無 | 有，可替換所有匹配 |
+| **token 消耗** | 傳送整個檔案內容（多） | 只傳 diff（少） |
+| **diff 顯示** | 有 structuredPatch + gitDiff | 有 |
+
+Edit 是日常主力；Write 用於「整個檔案都要換」或「新建檔案」的情境。
+
+來源：binary `FileReadTool`、`FileWriteTool`；官方安全文件
+
+---
+
+## 工具與 LLM 的關係
+
+大多數工具本身不呼叫 LLM，純粹執行操作：
+
+| 工具 | 是否使用 LLM | 說明 |
+|------|------------|------|
+| Bash, Read, Write, Edit, Glob, Grep | ✗ | 純執行，無 LLM |
+| WebFetch, WebSearch | ✗ | 網路請求，結果直接回傳給主 LLM |
+| ToolSearch | ✗ | schema 查找，無 LLM |
+| AskUserQuestion | ✗ | 向使用者請求輸入，無 LLM |
+| **Agent** | ✓ | 啟動獨立 LLM（可能不同 model，如 Haiku） |
+| **Skill** | 視設定 | 預設注入 context 後讓主 LLM 處理；`disable-model-invocation: true` 跳過 LLM |
+| **`prompt` 型 Hooks** | ✓ | 用指定 model 評估（預設用輕量快速 model） |
+
+來源：binary `disableModelInvocation`；`disable-model-invocation` frontmatter；Agent 實測（Haiku vs Sonnet）
+
+---
+
+## Skill 的執行機制（上下文注入 vs 邏輯）
+
+Skill 是**上下文注入為主、腳本預處理為輔**的混合模式：
+
+### 執行模式對比
+
+| 模式 | 條件 | 說明 |
+|------|------|------|
+| **注入模式**（預設） | 無 `disable-model-invocation` | SKILL.md 內容注入為 `isMeta: true` 訊息，主 LLM 負責決策 |
+| **腳本模式** | `disable-model-invocation: true` | `!`-prefixed 命令執行後注入，**不呼叫 LLM**（純腳本） |
+| **Agent 模式** | frontmatter 含 `agent` 欄位 | skill 路由到指定 subagent_type 執行 |
+| **Fork 模式** | `context: fork` | 建立獨立 fork context（不共享主 session 歷史） |
+
+### `!` 前綴命令的作用
+
+SKILL.md 中的 `!` 命令在**注入前**執行，輸出替換原本行：
+
+```markdown
+## 預處理輸出
+!`python3 "${CLAUDE_SKILL_DIR}/scripts/parse.py" "$ARGUMENTS"`
+```
+
+→ CLI 展開時執行 python 腳本，將輸出插入 context，LLM 才看到已壓縮的資料。
+
+這讓 Skill 既能靠 LLM 做決策，也能用腳本做大量資料預處理（避免 LLM 直接處理 raw JSONL）。
+
+來源：binary `CLAUDE_SKILL_DIR`、`disable-model-invocation`、`context: fork`
+
+---
+
+## Skill `allowed-tools` vs Agent 的工具權限
+
+| | Skill `allowed-tools` | Agent `tools` 參數 |
+|--|----------------------|-------------------|
+| **執行環境** | 主 session（同 context） | 獨立 subagent（獨立 context） |
+| **隔離程度** | 限制但共享主 session 狀態 | 完全隔離 |
+| **設定位置** | SKILL.md frontmatter | Agent tool 呼叫參數 / `--agents` CLI flag |
+| **繼承** | 若未設定，預設繼承主 session 所有工具 | 若未設定，預設繼承全部工具 |
+| **作用** | skill 執行期間 Claude 只能用這些工具 | subagent 整個生命週期只有這些工具 |
+
+**為何 Skill 需要 allowed-tools？**
+
+Skill 在主 session 執行，主 Claude 有全部工具。若不限制，skill 執行中 Claude 可能用到 skill 設計者不預期的工具。`allowed-tools` 讓 skill 成為**有邊界的操作集**，例如 session-analyze 只允許 Bash + Read，確保它不會意外呼叫 Agent 或 Write。
+
+來源：binary `allowed-tools`、`allowedTools` frontmatter 解析
 
 ---
 
