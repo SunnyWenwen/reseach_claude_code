@@ -195,6 +195,23 @@ Edit 是日常主力；Write 用於「整個檔案都要換」或「新建檔案
 
 來源：binary `FileReadTool`、`FileWriteTool`；官方安全文件
 
+### 為何某些 Bash 能做的事要獨立成 tool
+
+設計原則：**能預測行為邊界的操作，做成專用 tool；需要靈活組合的，留給 Bash。**
+
+| Bash 可做 | 獨立 tool | 獨立的理由 |
+|-----------|-----------|-----------|
+| `cat file` | Read | 安全、token 限制、特殊格式解析 |
+| `rg pattern` | Grep | 安全、結構化輸出、不走 shell |
+| `find . -name "*.js"` | Glob | 安全、結果結構化 |
+| `echo > file` | Write | 安全、diff 計算、寫入範圍限制 |
+
+**Bash 的風險在命令字串本身**，所以需要 prefix/exact/wildcard 規則做細粒度控制；專用 tool 的參數由 framework 固定組裝，沒有 shell injection 風險，只需要工具層級的允許/拒絕。
+
+**Grep vs Bash 執行機制的差異：**
+- **Bash**：起完整 bash shell，命令字串透過 shell 解析（`&&`、pipe、環境變數展開都有效）
+- **Grep**：直接 spawn ripgrep binary，不走 shell（所以走 `filePatternTools` 路徑，不受 bash prefix 規則管控）
+
 ---
 
 ## 工具與 LLM 的關係
@@ -215,33 +232,76 @@ Edit 是日常主力；Write 用於「整個檔案都要換」或「新建檔案
 
 ---
 
-## Skill 的執行機制（上下文注入 vs 邏輯）
+## Skill 的執行機制
 
-Skill 是**上下文注入為主、腳本預處理為輔**的混合模式：
+### Framework 對 Skill 做的處理（依序）
 
-### 執行模式對比
+Claude Code framework 在把 skill 內容交給 LLM 之前，會做以下處理：
 
-| 模式 | 條件 | 說明 |
-|------|------|------|
-| **注入模式**（預設） | 無 `disable-model-invocation` | SKILL.md 內容注入為 `isMeta: true` 訊息，主 LLM 負責決策 |
-| **腳本模式** | `disable-model-invocation: true` | `!`-prefixed 命令執行後注入，**不呼叫 LLM**（純腳本） |
-| **Agent 模式** | frontmatter 含 `agent` 欄位 | skill 路由到指定 subagent_type 執行 |
-| **Fork 模式** | `context: fork` | 建立獨立 fork context（不共享主 session 歷史） |
+```
+讀取 SKILL.md
+    ↓
+1. 變數替換：${CLAUDE_SKILL_DIR}、${CLAUDE_SESSION_ID}、$ARGUMENTS
+    ↓
+2. ! 前綴命令：執行 shell，輸出替換原行（LLM 看不到原始命令）
+    ↓
+3. allowed-tools：合併進 toolPermissionContext.alwaysAllowRules
+    ↓
+4. 依 frontmatter 決定執行路徑（見下方）
+    ↓
+回傳 tool_result: [{ type: "text", text: 處理後的內容 }]
+```
 
-### `!` 前綴命令的作用
+### 觸發路徑
 
-SKILL.md 中的 `!` 命令在**注入前**執行，輸出替換原本行：
+| 方式 | 觸發者 | tool_result 注入方式 |
+|------|--------|---------------------|
+| `/skill-name args` | 使用者輸入 | `isMeta: true` user message |
+| `Skill("name", args)` | Claude 主動 | tool_result text block |
+
+兩者 framework 處理邏輯相同，差在注入位置不同。
+
+### 無參數時的行為
+
+`$ARGUMENTS` 為空 → `!` 命令帶空字串執行 → script 炸錯 → `is_error: true` 的 tool_result 回給 LLM → LLM 再推理補救（如 Glob 找路徑）。framework 不攔截、不提示，由 LLM 自行處理。
+
+來源：JSONL 實測（toolu_01J4WfTXM5...）
+
+### Frontmatter 欄位對應的 framework 邏輯
+
+| 欄位 | framework 行為 |
+|------|---------------|
+| `allowed-tools` | 合併進 `alwaysAllowRules`（軟性，僅自動允許，不限制其他工具） |
+| `disable-model-invocation: true` | tool_result 回來後不觸發 LLM 推理，loop 停止 |
+| `context: fork` | 建立獨立 fork context，不共享主 session 歷史 |
+| `agent` | 路由到指定 subagent_type 執行 |
+| `model` | 用指定 model 而非預設 |
+| `hooks` | skill 層級的 hook 事件 |
+| `user-invocable` | 控制是否出現在使用者可呼叫的 skill 清單 |
+| `when_to_use` | 提供給 LLM 判斷何時主動呼叫的說明 |
+| `argument-hint` | 純顯示用提示（使用者 UI + 告知 LLM 要傳什麼 args），無驗證 |
+
+### `allowed-tools` 是軟性限制
+
+```
+skill 執行期間 alwaysAllowRules
+= settings.json 原有規則
++ allowed-tools 裡的規則      ← 合併，不是替換
+```
+
+skill 跟主 LLM 共享同一 context，allowed-tools 只是「這些工具不用問」，不能阻止 LLM 呼叫其他工具（其他工具仍可用，但需確認）。與 Agent tools 的硬性限制（API 層，LLM 根本看不到其他工具 schema）本質不同。
+
+### `!` 前綴命令
 
 ```markdown
-## 預處理輸出
 !`python3 "${CLAUDE_SKILL_DIR}/scripts/parse.py" "$ARGUMENTS"`
 ```
 
-→ CLI 展開時執行 python 腳本，將輸出插入 context，LLM 才看到已壓縮的資料。
+- framework 在注入前執行，LLM 收到的是輸出結果，看不到原始命令
+- 用於大量資料預處理（如壓縮 92KB JSONL 成摘要），避免 LLM 直接面對原始資料
+- 執行失敗 → 錯誤訊息替換原行，作為 tool_result 內容回給 LLM
 
-這讓 Skill 既能靠 LLM 做決策，也能用腳本做大量資料預處理（避免 LLM 直接處理 raw JSONL）。
-
-來源：binary `CLAUDE_SKILL_DIR`、`disable-model-invocation`、`context: fork`
+來源：binary `CLAUDE_SKILL_DIR`、`disable-model-invocation`、`alwaysAllowRules`；JSONL 實測
 
 ---
 
