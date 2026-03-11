@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+## 專案說明
+
+本專案專門研究 Claude Code 的內部機制與行為，所有工作圍繞著理解、記錄、驗證 Claude Code 的運作方式。
+
 ## Claude Code 機制知識庫
 
 當對話中討論到任何 Claude Code 的機制（包括但不限於：工具載入、ToolSearch、Skill 系統、Session JSONL 格式、Hooks、context 管理等），請執行以下步驟：

