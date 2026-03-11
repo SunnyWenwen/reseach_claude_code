@@ -1,15 +1,21 @@
 {
   "permissions": {
     "allow": [
+      "Edit",
+      "Write",
       "WebFetch(domain:docs.anthropic.com)",
       "Skill(file-report)",
       "Bash(python3:*)",
       "Bash(ls:*)",
       "Bash(grep:*)",
       "Bash(strings:*)",
+      "Bash(head:*)",
+      "Bash(cat:*)",
+      "Bash(mkdir:*)",
       "WebSearch",
       "mcp__ide__getDiagnostics",
-      "mcp__ide__executeCode"
+      "mcp__ide__executeCode",
+      "Skill(session-analyze)"
     ]
   }
 }

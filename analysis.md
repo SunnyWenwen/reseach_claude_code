@@ -15,37 +15,97 @@ Claude Code 的工具預設是 **deferred** 狀態，不會在對話開始時全
 - **Deferred**：schema 未在 context 中，需先用 ToolSearch 載入（系統以 `<available-deferred-tools>` 標記），共 16 個
 - **MCP 工具**：由外部 MCP server 提供，格式為 `mcp__{server}__{tool}`；MCP server 連線時 schema 預載入 context（不經 ToolSearch），未連線時工具不存在
 
-| 工具 | 類型 | 作用 |
-|------|------|------|
-| **Read** | 預載 | 讀取本地檔案內容 |
-| **Edit** | 預載 | 對檔案進行精確字串替換編輯 |
-| **Write** | 預載 | 寫入/覆蓋整個檔案 |
-| **Bash** | 預載 | 執行 shell 命令（支援 `run_in_background`，完成後以 `<task-notification>` 通知） |
-| **Glob** | 預載 | 用 glob pattern 搜尋檔案路徑 |
-| **Grep** | 預載 | 用 regex 搜尋檔案內容（ripgrep） |
-| **Agent** | 預載 | 啟動子 agent 處理複雜任務（general-purpose / Explore / Plan 等） |
-| **ToolSearch** | 預載 | 載入 deferred 工具（元工具）；可一次載入多個：`select:A,B,C` |
-| **Skill** | 預載 | 執行 `.claude/skills/` 下定義的 skill |
-| **AskUserQuestion** | Deferred | 主動向使用者提問 |
-| **WebFetch** | Deferred | 抓取指定 URL 的網頁內容 |
-| **WebSearch** | Deferred | 搜尋網路 |
-| **NotebookEdit** | Deferred | 編輯 Jupyter notebook（`.ipynb` 檔案必須用此工具，Edit 會報錯） |
-| **EnterPlanMode** | Deferred | 進入 Plan 模式；Write 可存計畫至 `~/.claude/plans/{slug}.md` |
-| **ExitPlanMode** | Deferred | 離開 Plan 模式，提交計畫讓使用者審核 |
-| **EnterWorktree** | Deferred | 在 `.claude/worktrees/{name}` 建立 git worktree 隔離環境 |
-| **TaskCreate** | Deferred | 建立使用者任務（ID 為數字，如 `1`） |
-| **TaskGet** | Deferred | 取得任務詳情 |
-| **TaskList** | Deferred | 列出所有使用者任務 |
-| **TaskUpdate** | Deferred | 更新使用者任務狀態 |
-| **TaskStop** | Deferred | 停止**背景 Bash 任務**（ID 為 hash，如 `bz6rlnhqb`）；無法停止 TaskCreate 任務 |
-| **TaskOutput** | Deferred | 讀取背景 Bash 任務輸出 |
-| **CronCreate** | Deferred | 建立定時排程（session-only，Claude 退出後消失） |
-| **CronDelete** | Deferred | 刪除排程 |
-| **CronList** | Deferred | 列出所有排程 |
-| **mcp__ide__getDiagnostics** | MCP | 取得 IDE 診斷資訊（lint/type 錯誤等） |
-| **mcp__ide__executeCode** | MCP | 在 IDE 執行程式碼 |
+權限符號說明：
+- **自動允許**：預設不詢問，直接執行
+- ⚠️ **預設詢問**：需使用者手動允許，可透過 `permissions.allow` 設定關閉
+- 🔒 **判斷性確認**：非權限系統控制，由 Claude 自行判斷是否需確認（無法透過設定關閉）
+
+| 工具 | 類型 | 權限 | 作用 |
+|------|------|------|------|
+| **Read** | 預載 | 自動允許 | 讀取本地檔案內容 |
+| **Glob** | 預載 | 自動允許 | 用 glob pattern 搜尋檔案路徑 |
+| **Grep** | 預載 | 自動允許 | 用 regex 搜尋檔案內容（ripgrep） |
+| **ToolSearch** | 預載 | 自動允許 | 載入 deferred 工具（元工具）；可一次載入多個：`select:A,B,C` |
+| **TaskGet** | Deferred | 自動允許 | 取得任務詳情 |
+| **TaskList** | Deferred | 自動允許 | 列出所有使用者任務 |
+| **TaskOutput** | Deferred | 自動允許 | 讀取背景 Bash 任務輸出 |
+| **CronList** | Deferred | 自動允許 | 列出所有排程 |
+| **Edit** | 預載 | ⚠️ 可設定 | 對檔案進行精確字串替換編輯；設定：`Edit` |
+| **Write** | 預載 | ⚠️ 可設定 | 寫入/覆蓋整個檔案；設定：`Write` |
+| **Bash** | 預載 | ⚠️ 可設定 | 執行 shell 命令（支援 `run_in_background`，完成後以 `<task-notification>` 通知）；設定：`Bash(command:*)` |
+| **Agent** | 預載 | ⚠️ 可設定 | 啟動子 agent 處理複雜任務（general-purpose / Explore / Plan 等）；設定：`Agent` |
+| **Skill** | 預載 | ⚠️ 可設定 | 執行 `.claude/skills/` 下定義的 skill；設定：`Skill(skill-name)` |
+| **AskUserQuestion** | Deferred | ⚠️ 可設定 | 主動向使用者提問；設定：`AskUserQuestion` |
+| **WebFetch** | Deferred | ⚠️ 可設定 | 抓取指定 URL 的網頁內容；設定：`WebFetch(domain:example.com)` |
+| **WebSearch** | Deferred | ⚠️ 可設定 | 搜尋網路；設定：`WebSearch` |
+| **NotebookEdit** | Deferred | ⚠️ 可設定 | 編輯 Jupyter notebook（`.ipynb` 檔案必須用此工具，Edit 會報錯）；設定：`NotebookEdit` |
+| **EnterPlanMode** | Deferred | ⚠️ 可設定 | 進入 Plan 模式；Write 可存計畫至 `~/.claude/plans/{slug}.md` |
+| **ExitPlanMode** | Deferred | ⚠️ 可設定 | 離開 Plan 模式，提交計畫讓使用者審核 |
+| **EnterWorktree** | Deferred | ⚠️ 可設定 | 在 `.claude/worktrees/{name}` 建立 git worktree 隔離環境 |
+| **TaskCreate** | Deferred | ⚠️ 可設定 | 建立使用者任務（ID 為數字，如 `1`）；設定：`TaskCreate` |
+| **TaskUpdate** | Deferred | ⚠️ 可設定 | 更新使用者任務狀態；設定：`TaskUpdate` |
+| **TaskStop** | Deferred | ⚠️ 可設定 | 停止**背景 Bash 任務**（ID 為 hash，如 `bz6rlnhqb`）；無法停止 TaskCreate 任務；設定：`TaskStop` |
+| **CronCreate** | Deferred | ⚠️ 可設定 | 建立定時排程（session-only，Claude 退出後消失）；設定：`CronCreate` |
+| **CronDelete** | Deferred | ⚠️ 可設定 | 刪除排程；設定：`CronDelete` |
+| **mcp__ide__getDiagnostics** | MCP | ⚠️ 可設定 | 取得 IDE 診斷資訊（lint/type 錯誤等）；設定：`mcp__ide__getDiagnostics` |
+| **mcp__ide__executeCode** | MCP | ⚠️ 可設定 | 在 IDE 執行程式碼；設定：`mcp__ide__executeCode` |
 
 來源：`b360f366...jsonl`（完整工具調用測試）
+
+### 權限確認與 JSONL 記錄
+
+權限確認對話框（使用者允許/拒絕工具呼叫的提示）**不會記錄在 JSONL 中**。
+
+JSONL 只記錄：
+- `TOOL_CALL`：Claude 發出的工具呼叫
+- `TOOL_RESULT`：工具執行結果（允許後的成功訊息，或拒絕後的錯誤）
+
+中間的確認交互對 JSONL 透明，無法從記錄中得知使用者是否被詢問過。
+
+來源：`ef82a45d...jsonl`
+
+### 權限確認的內部通訊協定（IPC）
+
+權限確認走的是 **進程間通訊（IPC）**，與 JSONL 無關。從 Claude Code JS bundle 逆向得到以下結構：
+
+**`permission_request`**（Claude → UI）
+```json
+{
+  "type": "permission_request",
+  "request_id": "...",
+  "agent_id": "...",
+  "tool_name": "Edit",
+  "tool_use_id": "...",
+  "description": "...",
+  "input": { ...工具參數... },
+  "permission_suggestions": []
+}
+```
+
+**`permission_response`**（UI → Claude）
+```json
+// 允許
+{ "type": "permission_response", "request_id": "...", "subtype": "success",
+  "response": { "updated_input": {...}, "permission_updates": [...] } }
+
+// 拒絕
+{ "type": "permission_response", "request_id": "...", "subtype": "error",
+  "error": "Permission denied" }
+```
+
+| 欄位 | 說明 |
+|------|------|
+| `permission_suggestions` | UI 顯示的建議 allow 規則選項 |
+| `updated_input` | 使用者可在確認前修改工具參數 |
+| `permission_updates` | 允許後寫回 `settings.json` 的規則 |
+
+其他相關 IPC message type：
+- `sandbox_permission_request/response`：sandbox 模式網路存取確認
+- `team_permission_update`：團隊權限同步
+- `plan_approval_request/response`：Plan 模式計畫審核
+- `mode_set_request`：切換操作模式
+
+來源：`6370316b...jsonl` tool-results（Claude Code JS bundle 逆向）
 
 ### 工具載入流程
 

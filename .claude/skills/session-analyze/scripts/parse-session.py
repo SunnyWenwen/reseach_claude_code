@@ -370,18 +370,9 @@ def main():
     print(output)
 
     # --- Save to conversation_for_human/{session_id}.txt ---
-    jsonl_dir = os.path.dirname(os.path.abspath(path))
-    # Walk up to find conversation_for_human dir (check jsonl_dir and its parent)
-    out_dir = None
-    for search_dir in [jsonl_dir, os.path.dirname(jsonl_dir)]:
-        candidate = os.path.join(search_dir, "conversation_for_human")
-        if os.path.isdir(candidate):
-            out_dir = candidate
-            break
-    if out_dir is None:
-        # Create it next to the JSONL file
-        out_dir = os.path.join(jsonl_dir, "conversation_for_human")
-        os.makedirs(out_dir, exist_ok=True)
+    # Always save to working directory, not next to the JSONL file
+    out_dir = os.path.join(os.getcwd(), "conversation_for_human")
+    os.makedirs(out_dir, exist_ok=True)
 
     fname = (session_id or os.path.splitext(os.path.basename(path))[0]) + ".txt"
     out_path = os.path.join(out_dir, fname)
