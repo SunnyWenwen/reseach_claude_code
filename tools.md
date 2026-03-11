@@ -165,6 +165,21 @@ Read/Write 不是 Bash 的語法糖，兩者在架構上有本質差異：
 
 Read/Write 讓 Claude Code 有「唯讀瀏覽」vs「寫入」的清晰權限界線，而不必所有檔案操作都要走 Bash confirm。
 
+### Read vs Grep vs Bash 的選擇邏輯
+
+| 情境 | Read | Grep | Bash |
+|------|:----:|:----:|:----:|
+| 讀取一般文字/程式檔 | ✓ | | |
+| 需要特定行範圍（offset/limit） | ✓ | | |
+| 讀圖片、PDF、ipynb（專用解析） | ✓ | | |
+| 搜尋哪些檔案含某字串 | | ✓ | |
+| 在已知檔案裡找特定內容位置 | ✓（配合 offset） | ✓ | |
+| 讀目錄內容 | | | ✓（ls） |
+| 讀 binary 檔案 | | | ✓（strings、xxd） |
+| 需要 filter／管線處理 | | | ✓ |
+
+**根本原因**：Read 和 Grep 預設自動允許，Bash 需要確認。能用專用工具就用，避免打斷使用者。系統 prompt 也明確指示「Use Read instead of cat/head/tail」。
+
 ### Write vs Edit
 
 | | Write | Edit |
