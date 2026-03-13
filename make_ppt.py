@@ -145,38 +145,112 @@ bullets(s, facts, 0.55, 2.72, 12.2, size=17, gap=0.52)
 
 
 # ══════════════════════════════════════════════════════════════════
-# SLIDE 4 – 工具總覽（依功能分群）
+# SLIDE 4a – 工具總覽 (1/2)  Pre-loaded 工具
 # ══════════════════════════════════════════════════════════════════
-s = prs.slides.add_slide(BLANK)
-slide_header(s, "02  工具總覽 — 依功能分群")
+TEAL = RGBColor(0x0E, 0x7A, 0x8E)
 
-groups = [
-    (BLUE,   "唯讀",
-     "Read, Glob, Grep, WebFetch, WebSearch,\nTaskGet, TaskList, TaskOutput, CronList, mcp__ide__getDiagnostics"),
-    (GREEN,  "寫入",
-     "Edit, Write, NotebookEdit"),
-    (ORANGE, "執行",
-     "Bash"),
-    (PURPLE, "規劃 / 隔離",
-     "EnterPlanMode, ExitPlanMode, EnterWorktree"),
-    (RED,    "任務管理",
-     "TaskCreate, TaskUpdate, TaskStop, CronCreate, CronDelete"),
-    (MUTED,  "互動 / Meta",
-     "AskUserQuestion, ToolSearch, Skill, Agent"),
+s = prs.slides.add_slide(BLANK)
+slide_header(s, "02  工具總覽 (1/2) — Pre-loaded 工具（9 個）",
+             "Session 開始即載入 schema，可直接呼叫，零延遲")
+
+# (color, name, perm, description)
+preloaded = [
+    (BLUE,   "Read",       "auto-allow", "讀取本地檔案；支援圖片（base64）、PDF（分頁）、ipynb（解析 cells）；硬上限 25k tokens"),
+    (BLUE,   "Glob",       "auto-allow", "用 glob pattern 搜尋符合條件的檔案路徑，結果依修改時間排序"),
+    (BLUE,   "Grep",       "auto-allow", "直接 spawn ripgrep 搜尋檔案內容（bypass shell，無注入風險，支援 regex）"),
+    (MUTED,  "ToolSearch", "auto-allow", "將 deferred 工具的 schema 載入 context，讓 Claude 能夠呼叫它"),
+    (GREEN,  "Edit",       "需確認",     "精確 old_string→new_string 替換；old_string 必須唯一；只傳 diff，token 消耗最少"),
+    (GREEN,  "Write",      "需確認",     "覆寫整個檔案內容；適合新建檔案或完全重寫；自動計算 diff 顯示給使用者"),
+    (ORANGE, "Bash",       "需確認",     "執行任意 shell 命令；支援 run_in_background（完成後以 task-notification 通知）"),
+    (MUTED,  "Agent",      "需確認",     "啟動有獨立 context 的 subagent（可用不同 model）執行複雜子任務"),
+    (MUTED,  "Skill",      "需確認",     "呼叫 .claude/skills/ 中定義的自訂指令集；LLM 接收展開後的內容再推理"),
 ]
 
-cy = 1.38
-for col, group_name, tools in groups:
+# column x positions and widths
+NX, NW = 0.55, 2.05   # name
+PX, PW = 2.65, 1.35   # perm badge
+DX, DW = 4.08, 9.1    # description
+ROW_H  = 0.56
+
+cy = 1.22
+rect(s, 0.5, cy, 12.33, 0.40, color=GRAY)
+t(s, "工具",       NX+0.05, cy+0.07, NW,  0.30, size=13, bold=True, color=MUTED)
+t(s, "權限",       PX+0.05, cy+0.07, PW,  0.30, size=13, bold=True, color=MUTED)
+t(s, "一句說明",   DX+0.05, cy+0.07, DW,  0.30, size=13, bold=True, color=MUTED)
+cy += 0.42
+
+for col, name, perm, desc in preloaded:
     hline(s, cy, color=GRAY)
-    t(s, group_name, 0.55, cy+0.1, 2.2, 0.48, size=17, bold=True, color=col)
-    t(s, tools, 2.9, cy+0.1, 10.0, 0.52, size=16, color=INK)
-    cy += 0.78
+    t(s, name,  NX+0.05, cy+0.07, NW,  ROW_H-0.1, size=15, bold=True,  color=col)
+    pc = BLUE if perm == "auto-allow" else MUTED
+    t(s, perm,  PX+0.05, cy+0.07, PW,  ROW_H-0.1, size=12, color=pc,   italic=True)
+    t(s, desc,  DX+0.05, cy+0.07, DW,  ROW_H-0.1, size=14, color=INK)
+    cy += ROW_H
 
 hline(s, cy, color=GRAY)
-hline(s, 6.45, color=GRAY)
-t(s, "載入方式",        0.55, 6.55, 2.2, 0.38, size=15, bold=True, color=BLUE)
-t(s, "Pre-loaded（9 個，session 開始就在 context）",   2.9, 6.55, 5.0, 0.38, size=15, color=INK)
-t(s, "Deferred（16 個，需先 ToolSearch 載入 schema）", 7.95, 6.55, 5.0, 0.38, size=15, color=INK)
+
+
+# ══════════════════════════════════════════════════════════════════
+# SLIDE 4b – 工具總覽 (2/2)  Deferred + MCP
+# ══════════════════════════════════════════════════════════════════
+s = prs.slides.add_slide(BLANK)
+slide_header(s, "02  工具總覽 (2/2) — Deferred（16 個）+ MCP（2 個）",
+             "Deferred 需先 ToolSearch 載入 schema（+1 round-trip）；MCP 由外部 server 提供")
+
+deferred = [
+    # (color, name, group, description)
+    (MUTED,  "AskUserQuestion", "互動",   "主動向使用者提問並等待回答（唯一能讓 Claude 暫停等待輸入的工具）"),
+    (BLUE,   "WebFetch",        "唯讀",   "抓取指定 URL 的網頁內容，HTML 自動轉 markdown 後回傳"),
+    (BLUE,   "WebSearch",       "唯讀",   "搜尋網路，取得超出 training data 的最新資訊"),
+    (GREEN,  "NotebookEdit",    "寫入",   "編輯 Jupyter notebook cell（.ipynb 必須用此；直接 Edit 會報錯）"),
+    (PURPLE, "EnterPlanMode",   "規劃",   "進入 Plan 模式；計畫存至 ~/.claude/plans/{slug}.md"),
+    (PURPLE, "ExitPlanMode",    "規劃",   "離開 Plan 模式，提交計畫給使用者審核"),
+    (PURPLE, "EnterWorktree",   "隔離",   "在 .claude/worktrees/ 建立隔離的 git worktree 環境"),
+    (RED,    "TaskCreate",      "任務",   "建立新的使用者任務（ID 為數字，如 1）"),
+    (RED,    "TaskUpdate",      "任務",   "更新任務的狀態或內容"),
+    (RED,    "TaskStop",        "任務",   "停止指定的背景 Bash 任務（ID 為 hash，如 bz6r...；無法停 TaskCreate 任務）"),
+    (RED,    "CronCreate",      "排程",   "建立定時排程（session-only，Claude 退出後消失）"),
+    (RED,    "CronDelete",      "排程",   "刪除指定排程"),
+    (BLUE,   "TaskGet",         "唯讀",   "取得指定任務的詳細資訊"),
+    (BLUE,   "TaskList",        "唯讀",   "列出所有使用者任務"),
+    (BLUE,   "TaskOutput",      "唯讀",   "讀取背景 Bash 任務的標準輸出"),
+    (BLUE,   "CronList",        "唯讀",   "列出目前 session 中所有排程任務"),
+]
+mcp_tools = [
+    (TEAL,   "mcp__ide__getDiagnostics", "MCP", "取得 IDE（VS Code / JetBrains）的 lint／type 錯誤診斷資訊"),
+    (TEAL,   "mcp__ide__executeCode",    "MCP", "在 IDE 環境執行指定程式碼片段"),
+]
+
+NX2, NW2 = 0.50, 2.60
+GX2, GW2 = 3.15, 1.00
+DX2, DW2 = 4.22, 8.95
+ROW_H2 = 0.39
+
+cy = 1.22
+rect(s, 0.5, cy, 12.33, 0.36, color=GRAY)
+t(s, "工具",     NX2+0.05, cy+0.06, NW2, 0.28, size=12, bold=True, color=MUTED)
+t(s, "群組",     GX2+0.05, cy+0.06, GW2, 0.28, size=12, bold=True, color=MUTED)
+t(s, "一句說明", DX2+0.05, cy+0.06, DW2, 0.28, size=12, bold=True, color=MUTED)
+cy += 0.38
+
+for col, name, grp, desc in deferred:
+    hline(s, cy, color=GRAY)
+    t(s, name, NX2+0.05, cy+0.05, NW2, ROW_H2, size=13, bold=True, color=col)
+    t(s, grp,  GX2+0.05, cy+0.05, GW2, ROW_H2, size=11, color=MUTED, italic=True)
+    t(s, desc, DX2+0.05, cy+0.05, DW2, ROW_H2, size=13, color=INK)
+    cy += ROW_H2
+
+# MCP divider
+hline(s, cy, color=BLUE, h=0.06)
+t(s, "MCP（需外部 server 連線）", NX2+0.05, cy+0.08, 4, 0.30, size=12, bold=True, color=TEAL)
+cy += 0.38
+for col, name, grp, desc in mcp_tools:
+    hline(s, cy, color=GRAY)
+    t(s, name, NX2+0.05, cy+0.05, NW2, ROW_H2, size=13, bold=True, color=col)
+    t(s, grp,  GX2+0.05, cy+0.05, GW2, ROW_H2, size=11, color=TEAL, italic=True)
+    t(s, desc, DX2+0.05, cy+0.05, DW2, ROW_H2, size=13, color=INK)
+    cy += ROW_H2
+hline(s, cy, color=GRAY)
 
 
 # ══════════════════════════════════════════════════════════════════
