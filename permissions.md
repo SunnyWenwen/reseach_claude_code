@@ -180,7 +180,7 @@ git status && rm -rf /important-dir   # 前綴合法，後半危險
 | `default` | ✓ | 預設模式，需要確認的都會詢問 |
 | `acceptEdits` | ✓ | **Accept Edits 模式**：自動接受所有檔案編輯（Edit/Write/NotebookEdit），但 Bash 等副作用指令仍需確認 |
 | `bypassPermissions` | ✓ | 跳過所有工具權限確認（危險） |
-| `dontAsk` | ✓ | Don't Ask 模式，不詢問任何操作 |
+| `dontAsk` | ✓ | 自動**拒絕**所有未預先允許的操作（不詢問，直接 deny）；與 `bypassPermissions`（跳過所有確認，直接 allow）相反 |
 | `plan` | ✓ | Plan 模式（僅規劃，限制實際執行） |
 | `auto` | 內部 | 自動模式（`claude -p` 等非互動場合） |
 
@@ -202,7 +202,7 @@ git status && rm -rf /important-dir   # 前綴合法，後半危險
 
 ## 官方安全機制補充
 
-來源：官方文件 https://docs.anthropic.com/en/docs/claude-code/security
+來源：官方文件 https://code.claude.com/docs/en/security.md
 
 ### 額外保護
 

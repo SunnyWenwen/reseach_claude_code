@@ -20,14 +20,34 @@
 - `session.md`：Session JSONL 格式
 - `model.md`：模型行為（Extended Thinking）
 
-## 以實際記錄為準
+## 機制驗證方法
 
-所有關於 Claude Code 機制的描述，**必須以真實的 session JSONL 內容為依據**，不得僅憑推測或理論描述。
+驗證 Claude Code 機制時，依以下優先順序使用三種方式，並在文件中標註來源：
 
-- 若有對應的 JSONL 檔案，優先使用 `/session-analyze <path>` 驗證實際行為
-- 發現描述與 JSONL 記錄不符時，以 JSONL 記錄為準並更新對應子檔
-- 記錄機制時，盡量附上觀察來源（例如：「來源：`5713c20a...jsonl`」）
-- JSONL 無法解釋的機制，可嘗試去 Claude Code 原始碼中尋找對應邏輯（見下方「Claude Code 程式碼位置」）
+### 1. 真實 session JSONL（最優先）
+
+實際執行的行為記錄，最可信。
+
+- 優先使用 `/session-analyze <path>` 解析 JSONL
+- 發現描述與 JSONL 記錄不符時，**以 JSONL 為準**並更新對應子檔
+- 記錄時附上來源（例如：「來源：`ef82a45d...jsonl`」）
+
+### 2. 官方文件（次優先）
+
+用於確認設計意圖與公開行為，快速查閱見 [`docs-reference.md`](docs-reference.md)。
+
+- 官方文件索引：`https://code.claude.com/docs/llms.txt`（base URL：`https://code.claude.com/docs/en/`）
+- 記錄時附上頁面名稱（例如：「來源：官方文件 `how-claude-code-works`」）
+
+### 3. Claude Code 原始碼（找不到或太細的機制才用）
+
+可在 237MB 執行檔中搜尋 minified JS bundle（無加密）。
+
+- 執行檔位置：`C:\Users\User\.local\share\claude\versions\{version}`
+- 搜尋方式：Python regex 或 `strings` + grep（見「Claude Code 程式碼位置」）
+- 記錄時附上函式名稱或特徵字串（例如：「來源：binary `Nc
+
+ 函式`」）
 
 ## 專案結構
 

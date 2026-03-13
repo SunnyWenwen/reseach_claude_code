@@ -272,7 +272,7 @@ Claude Code framework 在把 skill 內容交給 LLM 之前，會做以下處理�
 | 欄位 | framework 行為 |
 |------|---------------|
 | `allowed-tools` | 合併進 `alwaysAllowRules`（軟性，僅自動允許，不限制其他工具） |
-| `disable-model-invocation: true` | tool_result 回來後不觸發 LLM 推理，loop 停止 |
+| `disable-model-invocation: true` | （1）skill 描述不注入 context（context 成本為零，只能手動 invoke）；（2）tool_result 回來後不觸發 LLM 推理，loop 停止 |
 | `context: fork` | 建立獨立 fork context，不共享主 session 歷史 |
 | `agent` | 路由到指定 subagent_type 執行 |
 | `model` | 用指定 model 而非預設 |
@@ -362,6 +362,16 @@ ToolSearch("select:ToolName")   ← 將工具 schema 載入 context
 
 放在 `.claude/skills/<name>/SKILL.md` 的 Markdown 指令檔，告訴 Claude 如何完成特定任務。
 
+### Priority 順序
+
+同名 skill 衝突時，依以下優先序解析（來源：官方文件 `skills`）：
+
+```
+Enterprise > Personal (~/.claude/skills/) > Project (.claude/skills/) > Plugin (plugin-name:skill-name)
+```
+
+Plugin skill 需加 namespace（`/plugin-name:skill-name`）避免衝突。
+
 ### 觸發方式
 
 | 方式 | 觸發者 | 機制 |
@@ -420,6 +430,7 @@ SKILL.md 中可用 `!` 前綴在展開時執行命令並注入結果：
 | subagent_type | 可用工具 | 說明 |
 |---------------|----------|------|
 | `general-purpose` | 全部（`*`） | 通用型，適合複雜多步驟任務 |
+| `Bash` | Bash | 僅執行 shell 命令的輕量 agent |
 | `statusline-setup` | Read、Edit | 專門設定 Claude Code 狀態列 |
 | `Explore` | 除 Agent、ExitPlanMode、Edit、Write、NotebookEdit | 快速探索 codebase；支援 quick / medium / very thorough 三種深度 |
 | `Plan` | 除 Agent、ExitPlanMode、Edit、Write、NotebookEdit | 軟體架構規劃，回傳實作計畫 |
@@ -434,7 +445,7 @@ SKILL.md 中可用 `!` 前綴在展開時執行命令並注入結果：
 | **agentId** | 呼叫後回傳 agentId（如 `aabcf4bda0b27ca01`，`a` 前綴 = `local_agent`），可用 `resume` 參數繼續 |
 | **結果回傳** | 完成後以 TOOL_RESULT 回傳（含 `totalDurationMs`、`totalTokens`、`totalToolUseCount`） |
 | **不同 model** | Subagent 可能使用不同 model；實測 Explore 使用 `claude-haiku-4-5-20251001`，主 agent 為 `claude-sonnet-4-6` |
-| **不產生獨立 JSONL** | Subagent 活動全部以 `agent_progress` progress 記錄在主 session JSONL |
+| **產生獨立 JSONL** | Subagent 有自己的 transcript：`subagents/agent-{id}.jsonl`（詳見 session.md）；同時主 session JSONL 也會有 `agent_progress` progress 記錄即時進度。兩者並存，不互斥。 |
 
 來源：`00bbda8a...jsonl`（實測 Explore subagent）
 
@@ -549,7 +560,9 @@ Claude Code 支援在特定事件觸發時自動執行 shell 命令或 LLM promp
 | `WorktreeCreate` / `WorktreeRemove` | worktree 建立/移除 |
 | `InstructionsLoaded` | 指令載入時 |
 
-### Hook 類型（來源：binary schema）
+### Hook 類型（來源：binary schema + 官方文件）
+
+共 4 種類型，並非所有事件支援全部類型（`SessionStart`、`ConfigChange` 等只支援 `command`；`PreToolUse`、`PostToolUse`、`Stop` 等支援全部四種）。
 
 **`command` 類型**（執行 shell 命令）
 
@@ -559,9 +572,21 @@ Claude Code 支援在特定事件觸發時自動執行 shell 命令或 LLM promp
 | `command` | ✓ | 要執行的 shell 命令 |
 | `timeout` | | 逾時秒數 |
 | `statusMessage` | | spinner 顯示的自訂訊息 |
-| `once` | | `true` 表示執行一次後自動移除 |
+| `once` | | `true` 表示執行一次後自動移除（僅 skills 中可用） |
 | `async` | | `true` 表示背景執行，不阻塞 |
 | `asyncRewake` | | `true` 表示背景執行，但 exit code 2 時喚醒 model（blocking error），隱含 async |
+
+**`http` 類型**（POST 到 URL）
+
+| 欄位 | 必填 | 說明 |
+|------|------|------|
+| `type` | ✓ | `"http"` |
+| `url` | ✓ | 接收 POST 的 URL |
+| `timeout` | | 逾時秒數 |
+
+- 非 2xx 或連線失敗 = **非阻斷**錯誤（不同於 command 的 exit code 2）
+- 只能透過回傳 2xx + JSON body 阻斷操作
+- `allowedHttpHookUrls` 可在 settings 設白名單限制可呼叫的 URL
 
 **`prompt` 類型**（讓 LLM 評估）
 
@@ -570,9 +595,19 @@ Claude Code 支援在特定事件觸發時自動執行 shell 命令或 LLM promp
 | `type` | ✓ | `"prompt"` |
 | `prompt` | ✓ | 提示文字（可用 `$ARGUMENTS` 取得 hook 輸入 JSON） |
 | `timeout` | | 逾時秒數 |
-| `model` | | 指定 model（如 `"claude-sonnet-4-6"`），預設用小型快速 model |
+| `model` | | 指定 model（如 `"claude-sonnet-4-6"`），預設用輕量快速 model（Haiku） |
 | `statusMessage` | | spinner 顯示的自訂訊息 |
-| `once` | | `true` 表示執行一次後自動移除 |
+| `once` | | `true` 表示執行一次後自動移除（僅 skills 中可用） |
+
+- 回傳格式：`{"ok": true/false, "reason": "..."}`（exit 0 + JSON，不可用 exit 2）
+- 不支援 async
+
+**`agent` 類型**（多輪 LLM + 工具驗證）
+
+- 產生一個可使用 Read/Grep/Glob 等工具的 subagent 進行驗證
+- 預設 timeout 60 秒，最多 50 turns
+- 適合需要實際讀取檔案或執行測試才能做出判斷的場景
+- 不支援 async
 
 ### Hook 在 JSONL 中的記錄
 

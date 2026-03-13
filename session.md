@@ -47,6 +47,7 @@ d--project-test-claude-skill/
 | `progress` | 背景進度事件，**不進入 LLM context**（見下方） |
 | `system` | 系統事件（見下方） |
 | `file-history-snapshot` | 檔案狀態快照（長 session 可出現多次） |
+| `compact_boundary` | Context compaction（自動或手動）發生時的邊界記錄；含 `preTokens` 欄位（壓縮前的 token 數）；來源：官方文件 `sub-agents` |
 
 ### 同一 message 可能拆成多條記錄
 

@@ -36,3 +36,8 @@
 ## [model.md](model.md) — 模型行為
 
 - **Extended Thinking**：thinking 明文 vs 加密兩種狀態、設定方式
+
+## [docs-reference.md](docs-reference.md) — 官方文件索引
+
+- **頁面一覽**：6 頁已讀（how-claude-code-works / overview / memory / common-workflows / best-practices / ide-integrations）
+- **各頁重點**：Agentic Loop、Skill 載入、MEMORY.md 限制、Plan Mode、Fan-out pattern、initialPermissionMode 等
