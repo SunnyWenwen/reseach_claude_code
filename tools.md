@@ -609,6 +609,85 @@ Claude Code 支援在特定事件觸發時自動執行 shell 命令或 LLM promp
 - 適合需要實際讀取檔案或執行測試才能做出判斷的場景
 - 不支援 async
 
+### Hook 的 JSON 輸出控制
+
+來源：官方文件 `hooks`、`hooks-guide`
+
+**Exit code 語意**（僅 `command` 類型）：
+
+| exit code | 行為 |
+|-----------|------|
+| `0` | 允許，解析 stdout JSON |
+| `2` | **阻斷**，stderr 回傳給 Claude 或顯示給使用者 |
+| 其他 | 非阻斷錯誤（verbose 模式才顯示） |
+
+注意：exit 2 時 stdout JSON 被忽略；不可混用 exit 2 與 JSON。`http` 類型非 2xx = 非阻斷，只能靠 2xx + JSON body 阻斷。
+
+**通用 JSON 輸出欄位**（exit 0 時解析）：
+
+| 欄位 | 說明 |
+|------|------|
+| `continue: false` | 立即停止 Claude，不再繼續 |
+| `stopReason` | 停止的原因說明 |
+| `suppressOutput` | 隱藏此 hook 的輸出 |
+| `systemMessage` | 注入 Claude 的 context（下一個 turn 才送出，async hook 也有效） |
+| `additionalContext` | 同上，補充 context |
+| `decision: "block"` + `reason` | 阻斷操作（`PostToolUse`/`Stop`/`UserPromptSubmit` 用） |
+
+**事件專屬控制欄位**：
+
+| 事件 | 欄位 | 說明 |
+|------|------|------|
+| `PreToolUse` | `hookSpecificOutput.permissionDecision` | `allow`/`deny`/`ask` |
+| `PreToolUse` | `hookSpecificOutput.updatedInput` | 修改工具的輸入參數再執行 |
+| `PermissionRequest` | `hookSpecificOutput.decision.behavior` | 同上，針對權限請求 |
+| `WorktreeCreate` | stdout 純文字 | 指定 worktree 建立路徑 |
+
+### Stop hook 無限迴圈防護
+
+Stop hook 若直接 exit 2 阻斷，會導致 Claude 重試 → 再觸發 Stop hook → 無窮迴圈。
+
+**防護方式**：Stop hook 必須檢查輸入 JSON 的 `stop_hook_active` 欄位：
+
+```bash
+# Stop hook 範例
+INPUT=$(cat)
+if echo "$INPUT" | jq -e '.stop_hook_active == true' > /dev/null 2>&1; then
+  exit 0   # 已在 Stop hook 迴圈中，放行
+fi
+# 正常檢查邏輯...
+```
+
+來源：官方文件 `hooks-guide`
+
+### ConfigChange 事件
+
+在 settings/skills 檔案異動時觸發，可用於審計或阻止非授權修改：
+
+- exit 2 可阻止修改（`policy_settings` 例外，不可被 block）
+- 適合搭配 `PostToolUse` 記錄誰改了什麼設定
+- 只支援 `command` 類型
+
+### Matcher 機制
+
+Matcher 是 regex 字串，決定哪些 hook 在此事件觸發：
+
+| 事件 | 匹配對象 |
+|------|---------|
+| `PreToolUse` / `PostToolUse` | tool name（如 `Edit`、`Bash`） |
+| `Notification` | notification_type（`permission_prompt`/`idle_prompt`/`auth_success`/`elicitation_dialog`） |
+| `PreCompact` | `manual`（/compact）或 `auto`（自動觸發） |
+| `SessionStart` | source |
+| MCP 工具 | 格式 `mcp__<server>__<tool>` |
+
+### Hook 執行機制
+
+**平行執行與去重**：同一事件觸發時，所有匹配的 hook 平行執行；相同的 command string 或 URL 自動去重，不重複執行。
+
+**Hook 快照**：Claude Code 在 session 啟動時抓取 hooks 快照。session 進行中對 settings 檔的修改不立即生效，需在 `/hooks` 選單審閱後才套用（防止惡意修改 hook）。
+
+來源：官方文件 `hooks`、`hooks-guide`
+
 ### Hook 在 JSONL 中的記錄
 
 Hook 執行結果以 `progress` 記錄注入 session JSONL：
@@ -626,3 +705,51 @@ Hook 執行結果以 `progress` 記錄注入 session JSONL：
 `hookName` 格式為 `{事件}:{工具名稱}`（如 `PostToolUse:Read`）。
 
 來源：`6370316b...jsonl`；hook schema 來自 binary `2.1.72`
+
+---
+
+## Output Styles
+
+來源：官方文件 `output-styles`（2026-03-13）
+
+### 與 CLAUDE.md 的本質差異
+
+| | Output Styles | CLAUDE.md |
+|--|---------------|-----------|
+| **注入位置** | 直接**替換** system prompt 內容 | 作為**用戶訊息**附加在 system prompt 之後 |
+| **生效時機** | 下次新 session 才生效 | 每次 session 開始即生效 |
+| **持續性** | 整個 session 全域生效 | 整個 session 全域生效 |
+| **目的** | 改變 Claude 的整體回應風格 | 提供專案指令與上下文 |
+
+Output Styles 在 session 開始時寫入 system prompt，更改需在**下次新 session** 才生效（維持 prompt caching 效益）。
+
+### 三種內建樣式
+
+| 樣式 | 說明 |
+|------|------|
+| `Default` | 標準軟體工程模式 |
+| `Explanatory` | 在任務間插入教學 "Insights"，適合學習情境 |
+| `Learning` | 協作學習模式，加入 `TODO(human)` 讓使用者親手寫部分程式碼 |
+
+所有樣式都移除「簡潔輸出」指令。
+
+### 自訂樣式
+
+Markdown 檔案含 frontmatter，放置位置：
+
+- `~/.claude/output-styles/`（user 層）
+- `.claude/output-styles/`（project 層）
+
+Frontmatter 欄位：
+
+```yaml
+---
+name: my-style
+description: 說明
+keep-coding-instructions: true  # 保留預設的程式碼驗證指令（預設 false）
+---
+```
+
+### 設定方式
+
+`/config > Output style` 選取，儲存至 `.claude/settings.local.json`。

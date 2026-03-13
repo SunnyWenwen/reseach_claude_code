@@ -4,7 +4,7 @@
       "Edit",
       "Write",
       "WebFetch(domain:docs.anthropic.com)",
-      "Skill(file-report)",
+      "Skill",
       "Bash(python3:*)",
       "Bash(ls:*)",
       "Bash(grep:*)",
@@ -15,7 +15,7 @@
       "WebSearch",
       "mcp__ide__getDiagnostics",
       "mcp__ide__executeCode",
-      "Skill(session-analyze)"
+      "Bash(python search_tools.py 2>&1)"
     ]
   }
 }

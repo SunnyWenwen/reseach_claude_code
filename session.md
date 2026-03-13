@@ -111,3 +111,43 @@ assistant 記錄的 `usage` 欄位：
 ```
 
 同一 `message_id` 可能出現在多條記錄，統計時需以 `message_id` 去重，否則會重複計算。
+
+---
+
+## Checkpointing
+
+來源：官方文件 `checkpointing`（2026-03-13）
+
+### 觸發時機與儲存
+
+- 每次 Claude 呼叫 **file editing tools**（Edit / Write / NotebookEdit）前自動建立快照
+- 每個使用者 prompt 建立一個 checkpoint
+- 跨 session 持久化，預設 30 天後隨 session 清理
+
+**重要限制**：Bash 指令造成的檔案異動（`rm`、`mv`、`cp`、重導向等）**不被追蹤**，無法透過 checkpoint 還原。Checkpoint 只能還原 Claude 的 file editing tools 所做的修改。
+
+### Rewind 操作（Esc×2 或 `/rewind`）
+
+開啟 prompt 歷史清單，提供五種操作：
+
+| 操作 | 說明 |
+|------|------|
+| **Restore code and conversation** | 同時還原程式碼與對話 |
+| **Restore conversation** | 只還原對話，保留目前程式碼 |
+| **Restore code** | 只還原程式碼，保留目前對話 |
+| **Summarize from here** | 壓縮指定點之後的對話，釋放 context 空間 |
+| **Never mind** | 取消 |
+
+還原後，所選 prompt 的原始內容會自動填入輸入框供重新送出或編輯。
+
+### Summarize from here vs /compact
+
+| | Summarize from here | /compact |
+|--|---------------------|----------|
+| **壓縮範圍** | 只壓縮指定點之後的對話 | 壓縮整個對話 |
+| **早期 context** | 完整保留 | 全部壓縮 |
+| **原始訊息** | 仍保留在 transcript，Claude 可參照 | 同上 |
+
+### 定位
+
+Checkpoint 是「session 層級的快速復原」，不取代 Git（Git 作為永久版本歷史）。若要在保留原 session 的情況下嘗試不同方向，應使用 **fork**（`claude --continue --fork-session`）而非 Summarize。
