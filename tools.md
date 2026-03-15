@@ -430,11 +430,12 @@ SKILL.md 中可用 `!` 前綴在展開時執行命令並注入結果：
 | subagent_type | 可用工具 | 說明 |
 |---------------|----------|------|
 | `general-purpose` | 全部（`*`） | 通用型，適合複雜多步驟任務 |
-| `Bash` | Bash | 僅執行 shell 命令的輕量 agent |
 | `statusline-setup` | Read、Edit | 專門設定 Claude Code 狀態列 |
 | `Explore` | 除 Agent、ExitPlanMode、Edit、Write、NotebookEdit | 快速探索 codebase；支援 quick / medium / very thorough 三種深度 |
 | `Plan` | 除 Agent、ExitPlanMode、Edit、Write、NotebookEdit | 軟體架構規劃，回傳實作計畫 |
 | `claude-code-guide` | Glob、Grep、Read、WebFetch、WebSearch | 回答 Claude Code / SDK / API 問題；支援 `resume` 繼續前次 agent |
+
+注意：`local_bash:"b"` 是 agentId 前綴代號，**不是** subagent_type。來源：binary `2.1.76`，`agentType:"Bash"` 搜尋結果為 0 hits。
 
 ### Subagent 特性
 
