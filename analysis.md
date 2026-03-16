@@ -38,6 +38,13 @@
 ## [model.md](model.md) — 模型行為
 
 - **Extended Thinking**：thinking 明文 vs 加密兩種狀態、設定方式
+- **System Prompt 結構**：`dj()` 組裝函式；靜態 section 固定順序（Ws6/js6/Es6/Ts6/Xs6/Js6/Vs6）；動態 section（memory/env/language/output_style/mcp）；Output Style 對 system prompt 的影響；feature flags（tengu_sotto_voce 等）；CLAUDE_CODE_SIMPLE 極簡模式
+
+## [prompt-schema.md](prompt-schema.md) — Prompt 與 Schema 原文
+
+- **System Prompt 原文**：`dj()` 組裝函式；各靜態/動態 section 函式完整原文（Ws6/js6/Es6/Ts6/Xs6/Js6/Vs6/ws6/zs6/Ep1）
+- **工具 Description 原文**：LLM 實際看到的各工具 description 文字
+- **工具 Input Schema**：各工具 tool call 所需參數（Pre-loaded 9 個 + Deferred 7 個）；來源 binary Zod schema
 
 ## [docs-reference.md](docs-reference.md) — 官方文件索引
 

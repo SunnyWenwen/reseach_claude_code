@@ -58,10 +58,13 @@ def t(slide, text, x, y, w, h=0.55,
 def slide_header(slide, title, subtitle=None):
     bg(slide)
     hline(slide, 0.0, x=0.0, w=13.33, color=BLUE, h=0.10)
-    t(slide, title, 0.55, 0.18, 12.2, 0.7, size=26, bold=True, color=INK)
-    hline(slide, 1.0, color=GRAY)
     if subtitle:
-        t(slide, subtitle, 0.55, 1.08, 12, 0.42, size=14, color=MUTED, italic=True)
+        t(slide, title,    0.55, 0.16, 12.2, 0.52, size=24, bold=True, color=INK)
+        t(slide, subtitle, 0.55, 0.70, 12.2, 0.30, size=13, color=MUTED, italic=True)
+        hline(slide, 1.04, color=GRAY)
+    else:
+        t(slide, title, 0.55, 0.18, 12.2, 0.70, size=26, bold=True, color=INK)
+        hline(slide, 1.0, color=GRAY)
 
 def bullets(slide, items, x, y, w, size=17, gap=0.48, color=INK):
     cy = y
@@ -120,11 +123,12 @@ sections = [
         ("03", "Agent Architecture — ReAct Loop"),
         ("04", "工具總覽 — 依功能分類"),
         ("05", "工具深入：Read / Grep / Glob、Edit / Write、Bash、ToolSearch"),
-        ("06", "工具深入：Agent、Skill"),
+        ("06", "工具深入：Agent、Skill、Task"),
         ("07", "系統機制：Hooks、Permission"),
+        ("08", "資訊來源 — 機制驗證方法"),
     ]),
     ("Part 3", "Take Away", ORANGE, [
-        ("08", "Takeaways"),
+        ("09", "Takeaways"),
     ]),
 ]
 cy = 1.22
@@ -250,7 +254,7 @@ t(s, "Agentic Loop 的每一步，底層都是一個 Tool Call 的循環",
 # SLIDE 10 – ReAct Loop
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "01  Agent Architecture — ReAct Loop")
+slide_header(s, "03  Agent Architecture — ReAct Loop")
 
 steps = ["使用者輸入", "LLM 推理", "Tool Call", "Tool Result", "LLM 推理", "…直到完成"]
 cols  = [MUTED, BLUE, GREEN, ORANGE, BLUE, MUTED]
@@ -279,7 +283,7 @@ bullets(s, [
 # SLIDE 11 – 工具總覽 1/2
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "02  工具總覽 (1/2) — 核心工具", "★ = auto-allow，預設直接執行不詢問")
+slide_header(s, "04  工具總覽 (1/2) — 核心工具", "★ = auto-allow，預設直接執行不詢問")
 
 NX, NW = 0.50, 2.15
 AX, AW = 2.70, 0.40
@@ -322,7 +326,7 @@ hline(s, cy, color=GRAY)
 # SLIDE 12 – 工具總覽 2/2
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "02  工具總覽 (2/2) — 系統與擴充工具")
+slide_header(s, "04  工具總覽 (2/2) — 系統與擴充工具")
 
 NX2, NW2 = 0.50, 3.60
 DX2, DW2 = 4.18, 8.72
@@ -367,7 +371,7 @@ hline(s, cy, color=GRAY)
 # SLIDE 13 – Read vs Grep vs Glob
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "03  工具深入 — Read / Grep / Glob",
+slide_header(s, "05  工具深入 — Read / Grep / Glob",
              "同樣 auto-allow 且唯讀，但設計定位不同，不要用 Bash 代替")
 
 col_x = [0.50, 3.05, 6.50, 9.95]
@@ -413,7 +417,7 @@ t(s, "設計目的：三種工具皆 auto-allow（無確認中斷），從路徑
 # SLIDE 14 – Edit vs Write
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "03  工具深入 — Edit vs Write")
+slide_header(s, "05  工具深入 — Edit vs Write")
 
 col_x2 = [0.50, 3.55, 8.10]
 col_w2 = [2.98, 4.48, 4.82]
@@ -448,7 +452,7 @@ t(s, "日常修改首選 Edit（token 省、定位精準）；只有新建檔案
 # SLIDE 15 – Bash
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "03  工具深入 — Bash",
+slide_header(s, "05  工具深入 — Bash",
              "有專用工具時優先用專用工具；只有需要『執行』時才用 Bash")
 
 # Decision table
@@ -505,7 +509,7 @@ bullets(s, [
 # SLIDE 16 – ToolSearch
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "03  工具深入 — ToolSearch",
+slide_header(s, "05  工具深入 — ToolSearch",
              "唯一預設載入的 meta 工具：讓其他工具的 schema 進入 context")
 
 t(s, "工具 schema 全部預載會消耗大量 token，設計上分為兩種模式，由 ToolSearch 負責按需載入：",
@@ -565,7 +569,7 @@ t(s, "使用方式：select:ToolName（精確）或關鍵字搜尋如 'notebook 
 # SLIDE 17 – Agent
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "04  工具深入 — Agent Tool（Subagent）")
+slide_header(s, "06  工具深入 — Agent Tool（Subagent）")
 
 label(s, "5 種 subagent_type", 0.50, 1.15)
 # (name, tools, role, example)
@@ -613,7 +617,7 @@ bullets(s, [
 # SLIDE 18 – Skill
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "04  工具深入 — Skill 系統")
+slide_header(s, "06  工具深入 — Skill 系統")
 
 label(s, "Skill 是什麼", 0.50, 1.15)
 bullets(s, [
@@ -652,60 +656,75 @@ bullets(s, [
 # SLIDE 19 – Task Tools
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "04  工具深入 — Task 任務管理工具",
-             "追蹤 Bash run_in_background 產生的背景任務；★ = auto-allow")
+slide_header(s, "06  工具深入 — Task 任務管理工具",
+             "追蹤 Bash run_in_background 產生的背景任務")
 
 t(s, "Bash 呼叫 run_in_background=True 時，命令立即移往背景執行並返回 task_id，Task 工具負責追蹤這些背景任務。",
   0.50, 1.15, 12.2, 0.36, size=15, color=INK)
 
 task_tools = [
-    ("TaskCreate",  " ", "建立任務記錄（通常由 Bash run_in_background 自動觸發）"),
-    ("TaskUpdate",  " ", "更新任務的 metadata 或描述"),
-    ("TaskStop",    " ", "強制停止一個正在執行的背景任務"),
-    ("TaskGet",     "★", "取得單一任務的目前狀態（running / completed / failed）"),
-    ("TaskList",    "★", "列出 session 中所有任務及其狀態"),
-    ("TaskOutput",  "★", "取得任務的完整 stdout / stderr 輸出內容"),
-    ("CronCreate",  " ", "建立 session-only 定時排程（Claude 退出後消失）"),
-    ("CronDelete",  " ", "刪除定時排程"),
-    ("CronList",    "★", "列出所有定時排程"),
+    ("TaskCreate",  "建立任務記錄（通常由 Bash run_in_background 自動觸發）"),
+    ("TaskUpdate",  "更新任務的 metadata 或描述"),
+    ("TaskStop",    "強制停止一個正在執行的背景任務"),
+    ("TaskGet",     "取得單一任務的目前狀態（running / completed / failed）"),
+    ("TaskList",    "列出 session 中所有任務及其狀態"),
+    ("TaskOutput",  "取得任務的完整 stdout / stderr 輸出內容"),
+    ("CronCreate",  "建立 session-only 定時排程（Claude 退出後消失）"),
+    ("CronDelete",  "刪除定時排程"),
+    ("CronList",    "列出所有定時排程"),
 ]
-NXT2, NXA2, NXD2 = 0.50, 2.68, 3.18
-NWT2, NWA2, NWD2 = 2.10, 0.42, 9.68
-ROW_HT = 0.38
+NXT2, NXD2 = 0.50, 3.00
+NWT2, NWD2 = 2.42, 9.82
+ROW_HT = 0.30
 
 rect(s, 0.50, 1.58, 12.33, 0.34, color=GRAY)
 t(s, "工具名稱", NXT2+0.10, 1.61, NWT2, 0.26, size=13, bold=True, color=MUTED)
-t(s, "★",       NXA2+0.05, 1.61, NWA2, 0.26, size=13, bold=True, color=BLUE)
 t(s, "功能說明", NXD2+0.05, 1.61, NWD2, 0.26, size=13, bold=True, color=MUTED)
 
 cy = 1.94
-for name, star, desc in task_tools:
+for name, desc in task_tools:
     hline(s, cy, color=GRAY)
-    t(s, name, NXT2+0.10, cy+0.06, NWT2,  ROW_HT-0.06, size=13, bold=True, color=TEAL)
-    t(s, star, NXA2+0.05, cy+0.06, NWA2,  ROW_HT-0.06, size=13, bold=True, color=BLUE)
-    t(s, desc, NXD2+0.05, cy+0.06, NWD2,  ROW_HT-0.06, size=13, color=INK)
+    t(s, name, NXT2+0.10, cy+0.06, NWT2, ROW_HT-0.06, size=13, bold=True, color=TEAL)
+    t(s, desc, NXD2+0.05, cy+0.06, NWD2, ROW_HT-0.06, size=13, color=INK)
     cy += ROW_HT
 hline(s, cy, color=GRAY)
 
-hline(s, cy + 0.14)
-label(s, "使用流程範例：背景跑測試，完成後取結果", 0.50, cy+0.26, color=TEAL, size=13)
-rect(s, 0.50, cy+0.64, 12.2, 1.08, color=LIGHT)
-fy = cy + 0.74
-t(s, "❶  Bash(\"npm test --all\", run_in_background=True)  →  立即返回 task_id，Claude 不等待，繼續推理其他工作",
-  0.68, fy,        11.8, 0.28, size=13, color=INK)
-t(s, "❷  收到 <task-notification: task_id completed>  →  Claude 得知任務結束，可以去取結果了",
-  0.68, fy+0.30,   11.8, 0.28, size=13, color=INK)
-t(s, "❸  TaskOutput(task_id)  →  取得完整 test 輸出，分析哪些失敗，進行下一輪修正",
-  0.68, fy+0.60,   11.8, 0.28, size=13, color=INK)
-t(s, "CronCreate 則用於定時排程，例如：每 10 分鐘自動執行一次 lint check，session 期間持續運作",
-  0.50, cy+1.80,   12.2, 0.28, size=13, color=MUTED, italic=True)
+hline(s, cy + 0.10)
+label(s, "何時走 Task 機制？", 0.50, cy+0.18, color=TEAL, size=13)
+
+t(s, "判斷條件：命令跑很久  AND  等待期間有其他事可做  →  兩個條件都要成立才值得用",
+  0.50, cy+0.46, 12.2, 0.26, size=13, bold=True, color=TEAL)
+
+when_data = [
+    (TEAL, "走 Task（run_in_background=True）",
+     "長時間命令 + 等待期間有其他工作",
+     "npm test 跑 3 分鐘 → 同時 Explore subagent 分析其他模組；前後端測試同時平行跑"),
+    (ORANGE, "只滿足「跑很久」，但沒有其他事做",
+     "同步跑就好，background 只是多管理一個 task_id",
+     "例：只是裝套件，裝完才能繼續 → 直接 Bash(\"npm install\") 等完即可"),
+    (MUTED, "直接同步執行",
+     "瞬間完成，或下一步必須等結果才能決定方向",
+     "例：git diff 輸出決定要修哪個檔 → 必須等結果；git status / ls 等瞬間完成"),
+]
+wy = cy + 0.66
+for col, title, desc, example in when_data:
+    rect(s, 0.50, wy, 12.2, 0.60, color=LIGHT)
+    rect(s, 0.50, wy, 0.18, 0.60, color=col)
+    t(s, title,   0.80, wy+0.05, 3.80, 0.24, size=12, bold=True, color=col)
+    t(s, desc,    4.70, wy+0.05, 7.80, 0.24, size=12, color=INK)
+    t(s, example, 0.80, wy+0.32, 11.8, 0.24, size=11, color=MUTED, italic=True)
+    wy += 0.64
+
+t(s, "實測（JSONL）：TaskOutput(task_id, block=True) 可直接等任務完成；TaskCreate 由 framework 自動觸發",
+  0.50, wy+0.04, 12.2, 0.24, size=11, color=MUTED, italic=True)
 
 
 # ══════════════════════════════════════════════════════════════════
 # SLIDE 20 – Hooks
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "05  系統機制 — Hooks（事件驅動擴充）")
+slide_header(s, "07  系統機制 — Hooks（事件驅動擴充）",
+             "預設無任何 hook；需自行在 settings.json 設定才會生效")
 
 label(s, "關鍵 Hook 事件（共 21 種，選幾個最常用的）", 0.50, 1.15)
 
@@ -741,16 +760,16 @@ BY2H = BY1H + BHH + 0.06
 
 type_data = [
     (BX1H, BY1H, GREEN,  "command — 執行 shell 命令",
-     "最常用。exit 2 可阻斷；async 背景執行。",
-     "例：PostToolUse → 存檔後自動跑 eslint"),
-    (BX2H, BY1H, PURPLE, "prompt — 讓另一個 LLM 評估",
-     "用輕量 model（Haiku）判斷是否允許，回傳 {ok: true/false}。",
-     "例：PreToolUse → 判斷 Bash 命令是否有危險"),
+     "exit 0 = 放行；exit 2 = 取消這次 tool call；async = 背景跑，Claude 不等它",
+     "例：PreToolUse → 偵測到 rm 就 exit 2 阻止；PostToolUse → async 跑 eslint"),
+    (BX2H, BY1H, PURPLE, "prompt — 讓另一個 LLM 判斷",
+     "用輕量 model（Haiku）評估，回傳 {ok: true/false}，ok=false 即阻斷",
+     "例：PreToolUse → 讓 LLM 判斷這個 Bash 命令是否有危險"),
     (BX1H, BY2H, BLUE,   "http — POST 到指定 URL",
-     "呼叫 webhook，不需起額外程序，適合通知類場景。",
+     "事件發生時呼叫 webhook，適合串接外部服務，不需額外程序",
      "例：Stop → 發 Slack 通知「Claude 完成了」"),
     (BX2H, BY2H, ORANGE, "agent — 起 subagent 做複雜驗證",
-     "最強大；subagent 有獨立 context 與工具，可多輪推理。",
+     "最強大；subagent 有獨立 context 與工具，可多輪推理後才決定放行或阻斷",
      "例：PreToolUse → subagent 確認程式碼修改不破壞 API 契約"),
 ]
 for bx, by, col, title, body, example in type_data:
@@ -761,10 +780,10 @@ for bx, by, col, title, body, example in type_data:
 
 
 # ══════════════════════════════════════════════════════════════════
-# SLIDE 20 – Permission
+# SLIDE 21 – Permission
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "05  系統機制 — Permission 系統")
+slide_header(s, "07  系統機制 — Permission 系統")
 
 # ── Section A: 模型本身的推論習慣（軟性）────────────────────────
 rect(s, 0.50, 1.15, 12.33, 0.38, color=RED)
@@ -810,7 +829,7 @@ t(s, "Bash allow 格式：prefix Bash(git:*) 匹配任何 git 開頭命令；複
 # SLIDE 22 – 資訊來源
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "06  資訊來源 — 本簡報的機制如何驗證",
+slide_header(s, "08  資訊來源 — 本簡報的機制如何驗證",
              "三種來源各有優先順序：JSONL > 官方文件 > 原始碼")
 
 sources = [
@@ -843,7 +862,7 @@ for col, title, desc, note, path in sources:
 # SLIDE 23 – Takeaways
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
-slide_header(s, "06  Takeaways")
+slide_header(s, "09  Takeaways")
 
 takes = [
     (BLUE,   "Agentic Loop",
@@ -851,7 +870,7 @@ takes = [
     (GREEN,  "工具設計哲學",
      "讀取工具預載且 auto-allow → 零中斷探索。Edit 只傳 diff → token 最少。每個工具針對最少確認次數最佳化。"),
     (ORANGE, "Pre-loaded vs Deferred",
-     "9 個預載（零延遲）vs 16 個延遲載入（省 token，透過 ToolSearch，+2-3 秒）。根據使用頻率權衡 latency 與 token budget。"),
+     "9 個預載（零延遲）vs 17 個延遲載入（省 token，透過 ToolSearch，+2-3 秒）。根據使用頻率權衡 latency 與 token budget。"),
     (PURPLE, "Skill & Agent 的隔離差異",
      "Skill allowed-tools 是軟性（context 共享）。Agent tools 是硬性 API 層隔離（LLM 根本看不到其他工具 schema）。"),
     (RED,    "Permission 安全設計",
@@ -866,6 +885,47 @@ for col, title, body in takes:
     t(s, body,  3.25, cy+0.10, 9.55, 0.55, size=16, color=INK)
     cy += 0.82
 hline(s, cy)
+
+
+# ══════════════════════════════════════════════════════════════════
+# SLIDE 24 – 補充：這份簡報是怎麼做出來的
+# ══════════════════════════════════════════════════════════════════
+s = prs.slides.add_slide(BLANK)
+slide_header(s, "補充：這份簡報是怎麼做出來的",
+             "Claude Code 用 python-pptx 程式化生成，全程沒有打開 PowerPoint")
+
+label(s, "製作流程", 0.55, 1.15)
+
+pipeline = [
+    (BLUE,   "① 使用者描述需求",
+     "用自然語言說明每張投影片的主題、內容邏輯、希望的視覺風格"),
+    (GREEN,  "② Claude Code 寫 Python 腳本",
+     "用 python-pptx 把版面、顏色、文字、矩形全部以程式碼定義；每個元素都有精確的座標與尺寸（inches）"),
+    (ORANGE, "③ Bash 執行，產出 .pptx",
+     "執行 make_combined_ppt.py → 直接產出 claude_code_full.pptx，不需人工在 UI 拖拉"),
+    (PURPLE, "④ 人眼確認，提供 feedback",
+     "開啟 .pptx 看版面效果 → 文字截斷、超出邊界、顏色不對 → 回報給 Claude Code 修正"),
+    (MUTED,  "⑤ Edit 精確修改，重新執行",
+     "Claude Code 用 Edit tool 改腳本中的具體數值 → 重新執行 → 迭代直到滿意"),
+]
+cy = 1.52
+for col, title, desc in pipeline:
+    rect(s, 0.55, cy, 12.2, 0.66, color=LIGHT)
+    rect(s, 0.55, cy, 0.18, 0.66, color=col)
+    t(s, title, 0.85, cy+0.06, 3.40, 0.26, size=13, bold=True, color=col)
+    t(s, desc,  4.35, cy+0.08, 8.25, 0.50, size=13, color=INK)
+    cy += 0.70
+
+hline(s, cy + 0.10)
+label(s, "為什麼用程式碼，不直接用 PowerPoint？", 0.55, cy+0.20, color=BLUE, size=13)
+
+pros = [
+    "版本控制：每次修改都是 git diff，可隨時還原任何版本",
+    "批量一致：改一個顏色常數或 helper 函式，所有投影片同步更新",
+    "精確定位：座標以 inches 指定，不會因手滑拖錯；文字框大小可計算不超出邊界",
+    "可審查：整份 PPT 的邏輯都在 900 行 Python 裡，Claude Code 可直接讀懂並修改",
+]
+bullets(s, pros, 0.55, cy+0.58, 12.2, size=14, gap=0.42)
 
 
 # ── Save ──────────────────────────────────────────────────────────

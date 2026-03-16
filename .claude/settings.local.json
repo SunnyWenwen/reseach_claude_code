@@ -4,24 +4,23 @@
       "Edit",
       "Write",
       "WebFetch(domain:docs.anthropic.com)",
+      "WebFetch(domain:chatgpt.com)",
+      "WebSearch",
       "Skill",
       "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(.venv/Scripts/python3 make_combined_ppt.py)",
       "Bash(ls:*)",
       "Bash(grep:*)",
+      "Bash(find:*)",
       "Bash(strings:*)",
       "Bash(head:*)",
       "Bash(cat:*)",
       "Bash(mkdir:*)",
-      "WebSearch",
-      "mcp__ide__getDiagnostics",
-      "mcp__ide__executeCode",
+      "Bash(ping:*)",
       "Bash(python search_tools.py 2>&1)",
-      "WebFetch(domain:chatgpt.com)",
-      "Bash(cd D:/project/test_claude_skill && .venv/Scripts/pip install python-pptx -q)",
-      "Bash(cd D:/project/test_claude_skill && .venv/Scripts/pip install python-pptx -q 2>&1 | tail -3)",
-      "Bash(cd D:/project/test_claude_skill && .venv/Scripts/python3 make_why_ppt.py)",
-      "Bash(cd:*)",
-      "Bash(find:*)"
+      "mcp__ide__getDiagnostics",
+      "mcp__ide__executeCode"
     ]
   }
 }

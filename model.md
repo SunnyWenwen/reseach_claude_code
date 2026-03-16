@@ -50,3 +50,5 @@ Beta flags：
 也可在 Claude Code UI Settings 對話框切換（label: `Thinking mode`）。
 
 **`showThinkingSummaries`**：控制是否在 transcript view（`ctrl+o`）顯示 thinking 摘要，預設 `false`。
+
+詳見 [`prompt-schema.md`](prompt-schema.md)。

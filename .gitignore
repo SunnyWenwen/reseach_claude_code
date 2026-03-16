@@ -1,2 +1,4 @@
-Claude_Code_conversation/
-conversation_for_human/
+#Claude_Code_conversation/
+#conversation_for_human/
+
+.venv
