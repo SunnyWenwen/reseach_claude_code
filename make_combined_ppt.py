@@ -865,18 +865,20 @@ s = prs.slides.add_slide(BLANK)
 slide_header(s, "09  Takeaways")
 
 takes = [
-    (BLUE,   "Agentic Loop",
-     "批次 tool call 平行執行，不含 tool_use 才停止。Subagent 有獨立 loop，不佔主 agent 的推理次數。"),
-    (GREEN,  "工具設計哲學",
-     "讀取工具預載且 auto-allow → 零中斷探索。Edit 只傳 diff → token 最少。每個工具針對最少確認次數最佳化。"),
-    (ORANGE, "Pre-loaded vs Deferred",
-     "9 個預載（零延遲）vs 17 個延遲載入（省 token，透過 ToolSearch，+2-3 秒）。根據使用頻率權衡 latency 與 token budget。"),
-    (PURPLE, "Skill & Agent 的隔離差異",
-     "Skill allowed-tools 是軟性（context 共享）。Agent tools 是硬性 API 層隔離（LLM 根本看不到其他工具 schema）。"),
-    (RED,    "Permission 安全設計",
-     "複合命令永遠不匹配 prefix 規則（binary 逆向確認）。Layer 2 判斷性確認無法用設定關閉。"),
-    (MUTED,  "Strong Model 貫穿始終",
-     "前面每一個機制能正確運作，背後都是 model 在每一步做出正確判斷。工具再多，model 推理錯誤，整個系統就跑偏。"),
+    (BLUE,   "不是工具包，是系統",
+     "四個 Reason 互相依賴：Tools 讓 Loop 落地，Loop 讓 Context 有意義，Context 讓長任務品質撐住，Model 決定每一步推理上限。缺一個，系統降級。"),
+    (GREEN,  "Loop 的底層就是 ReAct",
+     "每一步 = Reason → tool_use → tool_result，批次平行發出，不含 tool_use 才終止。Subagent 有獨立 loop，context 不互污。"),
+    (ORANGE, "工具設計原則：保護 loop 流暢度",
+     "唯讀工具 auto-allow + 預載 → 探索零中斷。Edit 只傳 diff → token 最省。每個設計決策都在降低確認摩擦。"),
+    (PURPLE, "隔離有兩種強度，用途不同",
+     "Skill allowed-tools = 軟性（LLM 仍可呼叫其他工具）。Agent tools = 硬性 API 層隔離（LLM 根本看不到白名單以外的 schema）。不能互換。"),
+    (RED,    "Permission 有兩層，只有一層能設定",
+     "Framework 規則（auto-allow / Plan Mode / settings.json）可設定。Claude 的訓練習慣（發現非預期狀態就暫停確認）無法透過任何設定改變，因為改的是 framework，不是 model。"),
+    (TEAL,   "各環節良率決定整體成功率",
+     "Agentic loop 的成功率是各環節的乘積：理解需求、選對工具、解讀結果、判斷下一步，每一步都必須正確。就像晶圓製造，單步良率的微小差距，在數十輪迭代後會被放大成巨大的整體差距。這也是 Strong Model 為何如此關鍵。"),
+    (MUTED,  "行為要靠 JSONL 驗證",
+     "文件說設計意圖，JSONL 說實際行為。本簡報所有機制描述都以 session JSONL 交叉驗證，兩者有時不同，以 JSONL 為準。"),
 ]
 cy = 1.28
 for col, title, body in takes:
@@ -888,7 +890,53 @@ hline(s, cy)
 
 
 # ══════════════════════════════════════════════════════════════════
-# SLIDE 24 – 補充：這份簡報是怎麼做出來的
+# SLIDE 24 – 補充：使用 Code Agent 最大的陷阱
+# ══════════════════════════════════════════════════════════════════
+s = prs.slides.add_slide(BLANK)
+slide_header(s, "補充：使用 Code Agent 最大的陷阱",
+             "當溝通 + 修正 + 審查的成本 > 自己寫的成本，用 Agent 反而更慢")
+
+# 核心命題
+rect(s, 0.50, 1.15, 12.33, 0.52, color=RED)
+t(s, "溝通成本 > 實作成本  →  用 Agent 反而比自己寫更花時間",
+  0.68, 1.22, 12.0, 0.36, size=16, bold=True, color=WHITE)
+
+# 左欄：什麼時候容易踩到
+rect(s, 0.50, 1.75, 5.90, 0.34, color=ORANGE)
+t(s, "什麼時候容易踩到", 0.65, 1.78, 5.60, 0.26, size=13, bold=True, color=WHITE)
+pitfalls = [
+    "任務邊界模糊：Agent 猜錯方向，做完才發現不是你要的",
+    "任務太大、無中間驗證點：跑完 30 步後才發現第 3 步就偏了",
+    "缺少 domain context：不知道你的慣例、架構決策、命名規範",
+    "輸出難以驗證：沒有 test / lint，只能人眼審查，成本高",
+]
+cy_l = 2.12
+for item in pitfalls:
+    t(s, "• " + item, 0.65, cy_l, 5.65, 0.42, size=13, color=INK)
+    cy_l += 0.44
+
+# 右欄：怎麼讓溝通成本 < 實作成本
+rect(s, 6.93, 1.75, 5.90, 0.34, color=GREEN)
+t(s, "怎麼讓溝通成本 < 實作成本", 7.08, 1.78, 5.60, 0.26, size=13, bold=True, color=WHITE)
+mitigations = [
+    "任務要有明確完成條件：描述結果，不是描述方向",
+    "小步驟迭代：每一輪確認方向正確再繼續，不要一次丟大任務",
+    "前置 context：CLAUDE.md、範例、架構說明先給好，不要讓 Agent 猜",
+    "有驗證機制：能跑測試才能自我修正；不能驗證的風險轉嫁給你",
+]
+cy_r = 2.12
+for item in mitigations:
+    t(s, "• " + item, 7.08, cy_r, 5.65, 0.42, size=13, color=INK)
+    cy_r += 0.44
+
+hline(s, max(cy_l, cy_r) + 0.10)
+rect(s, 0.50, max(cy_l, cy_r) + 0.22, 12.33, 0.52, color=LIGHT)
+t(s, "Code Agent 的收益是真的，但前提是：任務描述清楚 + 驗證結果的成本夠低",
+  0.68, max(cy_l, cy_r) + 0.30, 12.0, 0.36, size=15, bold=True, color=INK)
+
+
+# ══════════════════════════════════════════════════════════════════
+# SLIDE 25 – 補充：這份簡報是怎麼做出來的
 # ══════════════════════════════════════════════════════════════════
 s = prs.slides.add_slide(BLANK)
 slide_header(s, "補充：這份簡報是怎麼做出來的",
