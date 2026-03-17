@@ -377,7 +377,7 @@ Plugin skill 需加 namespace（`/plugin-name:skill-name`）避免衝突。
 | 方式 | 觸發者 | 機制 |
 |------|--------|------|
 | `/skill-name` | 使用者輸入 | CLI 在框架層讀取 SKILL.md，展開為 `isMeta: true` 訊息注入 context；Claude 不需呼叫 Skill 工具 |
-| `Skill` tool | Claude 主動 | Claude 先 ToolSearch 載入 Skill 工具，再呼叫執行 |
+| `Skill` tool | Claude 主動 | Skill 是預載工具，Claude 可直接呼叫 `Skill("name", args)`，不需 ToolSearch |
 
 ### 執行流程（以 `/session-analyze` 為例）
 
