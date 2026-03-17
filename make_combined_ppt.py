@@ -272,11 +272,13 @@ hline(s, 2.2)
 label(s, "重要特性", 0.55, 2.3)
 bullets(s, [
     "單次 LLM 推理可在同一個 content 陣列中同時產生 text + 多個 tool_use",
-    "多個 tool_use 批次發出 → 平行執行 → 所有結果一起回來 → 才進行下一次推理",
+    "多個 tool_use 批次發出 → 所有結果一起回來 → 才進行下一次推理",
+    ">>唯讀工具（Read / Glob / Grep）isConcurrencySafe=true → 真正平行執行（binary 實測）",
+    ">>寫入工具（Write / Edit 等）isConcurrencySafe=false → 遇到即停，單獨執行後再繼續",
     "Loop 終止條件：LLM 推理產生的回應不含任何 tool_use，控制權回到使用者",
     "Background Bash（run_in_background）不阻塞推理，結果以非同步通知送達",
     "Subagent 有自己獨立的 agentic loop，不佔主 agent 的推理次數",
-], 0.55, 2.68, 12.2, size=17, gap=0.50)
+], 0.55, 2.68, 12.2, size=16, gap=0.46)
 
 
 # ══════════════════════════════════════════════════════════════════

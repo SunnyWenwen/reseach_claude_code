@@ -51,6 +51,36 @@ sequenceDiagram
     Note over C: 一次 LLM 推理處理兩個結果
 ```
 
+### 平行 vs 串聯：`isConcurrencySafe` 旗標
+
+每個工具物件都有 `isConcurrencySafe()` 方法，framework 執行迴圈依此決定能否平行：
+
+```javascript
+// binary 2.1.77 原文
+for (H of this.tools) {
+  if (H.status !== "queued") continue;
+  if (this.canExecuteTool(H.isConcurrencySafe))
+    await this.executeTool(H);       // 可平行就繼續跑
+  else if (!H.isConcurrencySafe)
+    break;                           // 不安全則 break，該工具單獨跑完再繼續
+}
+```
+
+| `isConcurrencySafe` | 工具 | 說明 |
+|---------------------|------|------|
+| `true` | Read、Glob、Grep（唯讀類） | 可與其他工具平行執行 |
+| `false` | Write、NotebookEdit、EnterWorktree、ExitWorktree、CronCreate、CronDelete、TodoWrite、MCP | 遇到即 break，強制單獨執行 |
+
+**實測驗證**：同一 response 發出兩個 `sleep 2` Bash 命令，兩者幾乎同時開始（差 197ms）、同時結束，總耗時 ~2 秒而非 ~4 秒，確認平行執行。來源：session 計時實測 2026-03-17。
+
+**推論**：Edit 尚未直接確認，但屬寫入工具，預期也是 `isConcurrencySafe: false`。
+
+### API 層級的串聯控制
+
+`disable_parallel_tool_use: true`：Anthropic API 參數，設定後強制 Claude 每次 response 只發一個 tool_use（API caller 使用，非 Claude Code 終端用戶設定）。
+
+來源：binary `2.1.77` offset 131,932,552。
+
 ### Loop 終止條件
 
 LLM 推理產生的回應**不含 `tool_use`** 時，loop 結束，控制權回到使用者：

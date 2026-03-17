@@ -20,7 +20,8 @@
       "Bash(ping:*)",
       "Bash(python search_tools.py 2>&1)",
       "mcp__ide__getDiagnostics",
-      "mcp__ide__executeCode"
+      "mcp__ide__executeCode",
+      "Bash(git:*)"
     ]
   }
 }
