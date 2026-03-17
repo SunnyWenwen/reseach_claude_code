@@ -640,7 +640,7 @@ rect(s, 6.90, 3.08, 5.93, 0.38, color=GRAY)
 t(s, "Trigger B  Skill tool  （Claude 主動呼叫）",
   7.02, 3.11, 5.70, 0.32, size=15, bold=True, color=PURPLE)
 bullets(s, [
-    'Claude 先 ToolSearch 載入 Skill schema，再呼叫 Skill("name", args)',
+    'Skill 是預載工具，Claude 可直接呼叫 Skill("name", args)，不需 ToolSearch',
     "Framework 處理 SKILL.md → tool_result 回傳給 LLM",
 ], 7.02, 3.48, 5.70, size=16, gap=0.46)
 
