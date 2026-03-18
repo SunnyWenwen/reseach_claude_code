@@ -32,6 +32,8 @@
 
 ## Quick Start
 
+建議在vscode底下操作
+
 安裝好 Claude Code 與 Python 後，在這個目錄啟動 Claude Code，直接問問題即可：
 
 ```bash
