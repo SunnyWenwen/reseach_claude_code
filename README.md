@@ -60,7 +60,6 @@ Claude Code 會自動讀取 [`CLAUDE.md`](CLAUDE.md) 的指引，結合現有的
   2. 複製到「JSONL session 記錄」路徑（`Claude_Code_conversation/`）
   3. 在 Claude Code 輸入框用 `@` 標註該檔案，請 Claude Code 分析（Claude Code 會自動結合 `/session-analyze` skill 進行解析）
   4. 分析結果會存放在 `conversation_for_human/`
-- Binary 路徑中的版本號（如 `2.1.77`）需替換為你本機實際安裝的版本，可在 `C:\Users\<user>\.local\share\claude\versions\` 下查看
 - 研究過程中發現的機制會自動記錄進分析文件（`tools.md`、`permissions.md` 等），下次提問時 Claude Code 會直接參考這些既有記錄。文件分類方式見 [`analysis.md`](analysis.md)
 - [`docs-reference.md`](docs-reference.md) 是爬過一遍官網文件後整理的目錄索引。需要查閱官方文件時，Claude Code 會先看這份索引找到對應頁面，再透過 WebSearch 取得最新內容
 
