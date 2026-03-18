@@ -1,7 +1,7 @@
 # 用 Claude Code 研究 Claude Code
 
 這個專案用 Claude Code 自身作為研究工具，深入分析 Claude Code 的內部機制。
-所有發現都經過三層驗證：session JSONL → 官方文件 → binary 原始碼。
+驗證機制的方法有三種：session JSONL(claude code的上下文log)、官方文件、binary 原始碼搜尋，探索機制細節寫在 [`CLAUDE.md`](CLAUDE.md)內。
 
 ---
 
@@ -38,7 +38,7 @@
 claude
 ```
 
-Claude Code 會自動讀取 `CLAUDE.md` 的指引，結合現有的機制分析文件、`/session-analyze` skill 與 binary 搜尋腳本來回答問題。
+Claude Code 會自動讀取 [`CLAUDE.md`](CLAUDE.md) 的指引，結合現有的機制分析文件、`/session-analyze` skill 與 binary 搜尋腳本來回答問題。
 
 **範例問題：**
 - 「Bash 的 allow 規則是怎麼匹配的？」
@@ -46,7 +46,7 @@ Claude Code 會自動讀取 `CLAUDE.md` 的指引，結合現有的機制分析�
 - 「Pre-loaded 和 Deferred 工具的差異是什麼？」
 - 「搜尋 binary，看看 isConcurrencySafe 的邏輯」
 
-> **注意**：`CLAUDE.md` 內有寫死的路徑，clone 後請先調整以下兩個段落再開始使用：
+> **注意**：[`CLAUDE.md`](CLAUDE.md) 內有寫死的路徑，clone 後請先調整以下兩個段落再開始使用：
 > - **`## 專案結構`**：工作目錄、JSONL session 記錄路徑、系統 session 記錄路徑
 > - **`## Claude Code 程式碼位置`**：執行檔路徑（`C:\Users\User\...`）、資料與設定路徑
 
@@ -54,7 +54,7 @@ Claude Code 會自動讀取 `CLAUDE.md` 的指引，結合現有的機制分析�
 
 ## 注意事項
 
-- `CLAUDE.md` 是寫給 Claude Code 看的專案指令，定義了機制探索的規則：如何更新分析文件、驗證優先順序、skill 維護規則等。有興趣了解如何引導 Claude Code 做研究的可以參考。
+- [`CLAUDE.md`](CLAUDE.md) 是寫給 Claude Code 看的專案指令，定義了機制探索的規則：如何更新分析文件、驗證優先順序、skill 維護規則等。有興趣了解如何引導 Claude Code 做研究的可以參考。
 - 若想把某個 session 的上下文貼給 Claude Code 分析：
   1. 到 `CLAUDE.md → ## 專案結構` 中的「系統 session 記錄」路徑，找到想分析的 `.jsonl`
   2. 複製到「JSONL session 記錄」路徑（`Claude_Code_conversation/`）
