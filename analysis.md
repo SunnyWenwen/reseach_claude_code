@@ -46,6 +46,13 @@
 - **工具 Description 原文**：LLM 實際看到的各工具 description 文字
 - **工具 Input Schema**：各工具 tool call 所需參數（Pre-loaded 9 個 + Deferred 7 個）；來源 binary Zod schema
 
+## [ui.md](ui.md) — Claude Code Web UI 行為
+
+- **Conversation Metadata**：branch/PR 對應在 conversation 初始化時固定，整個 session 不可變
+- **Create PR vs View PR**：PR 一旦建立即鎖定為「View PR」，即使 PR 已 merge 也不切回；需開新 conversation 才能再次「Create PR」
+- **已知限制**：手動建 PR 無法被偵測、branch rename 導致按鈕失效
+- 相關 issue：anthropics/claude-code#11176、anthropics/claude-code#30021
+
 ## [docs-reference.md](docs-reference.md) — 官方文件索引
 
 - **頁面一覽**：6 頁已讀（how-claude-code-works / overview / memory / common-workflows / best-practices / ide-integrations）
