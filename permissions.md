@@ -115,15 +115,17 @@ JSONL 無法還原「是否曾詢問過確認」。
 
 ## Bash 工具的權限匹配邏輯
 
-來源：Claude Code 執行檔逆向（`2.1.72`，函數 `Nc$`、`IKL`、`aVH`）
+來源：外流原始碼 2.1.88 `utils/permissions/shellRuleMatching.ts`（已交叉確認 binary 2.1.72 逆向結論）
 
-### ruleContent 的三種類型（函數 `IKL`）
+### ruleContent 的三種類型（`parsePermissionRule()`）
 
 | 格式 | 類型 | 說明 |
 |------|------|------|
-| `git:*` | `prefix`（legacy） | 命令以 `git` 開頭 |
-| `git status` | `exact` | 完全相符 |
-| `git *` | `wildcard` | glob/wildcard 匹配 |
+| `git:*` | `prefix`（legacy） | 以 `:*` 結尾，提取前綴做前綴比對；向後相容語法 |
+| `git status` | `exact` | 完全相符，無萬用字元 |
+| `git *` | `wildcard` | 含未跳脫的 `*`，轉為 regex 比對 |
+
+判斷順序：`prefix`（`:*` 結尾）→ `wildcard`（含 `*`）→ `exact`（其餘）
 
 ### prefix 規則的匹配條件
 
@@ -136,34 +138,162 @@ command === "xargs git"
 command.startsWith("xargs git ")
 ```
 
-### 複合命令永遠不匹配 prefix 規則（安全設計）
+### wildcard 規則的匹配邏輯（`matchWildcardPattern()`）
 
-```js
-// 判斷是否為複合命令（含 &&, ||, ;, |）
-K.set(command, iCA(command).length > 1)
+- `*` 轉成 regex `.*`（含 dotAll，可跨行）
+- `\*` → literal `*`，`\\` → literal `\`
+- 特殊：`git *`（尾端 ` *` 且唯一萬用字元）→ trailing space+args 設為 optional，即 `git *` 同時匹配 `git` 和 `git add`
 
-case "prefix":
-  if (K.get(w)) return false;  // 複合命令直接跳過
+```
+Bash(git *)  ← 匹配 "git"、"git add"、"git commit -m 'msg'"
+Bash(npm * install)  ← 不做 optional 處理（多個萬用字元）
 ```
 
-**這是防越獄的刻意設計**：若複合命令也能匹配 prefix 規則，攻擊者可在合法命令後接危險操作：
+### 複合命令永遠不匹配 prefix 規則（安全設計）
+
+來源：binary 2.1.72 逆向確認（minified `iCA()`）
+
+```js
+// 含 &&, ||, ;, | 的複合命令直接跳過 prefix 規則
+case "prefix":
+  if (isCompoundCommand(command)) return false;
+```
+
+**這是防越獄的刻意設計**：
 
 ```bash
 # 設定：Bash(git:*)
-git status && rm -rf /important-dir   # 前綴合法，後半危險
+git status && rm -rf /important-dir   # 前綴合法，後半危險 → 強制詢問
 ```
 
 強制複合命令永遠需要額外確認，確保 prefix 規則只授權「單一操作」。
 
-### Windows 路徑的注意事項
+### rule content 的 escaping
 
-`bI()` 用 bash tokenizer 解析命令，遇到 Windows 反斜線路徑（如 `ls 'C:\Users\...'`）可能解析失敗，觸發不同的判斷路徑。
+規則格式為 `ToolName(content)`，若 content 本身含括號需跳脫：
+
+```
+Bash(python -c "print\(1\)")  ← 匹配含括號的命令
+```
+
+`escapeRuleContent()` / `unescapeRuleContent()` 負責往返轉換（先跳脫 `\` 再跳脫 `()`）。
 
 ### 仍會被詢問的情況（即使已設定 allow 規則）
 
 1. **複合命令**：`ls ... && echo ... && ls ...`（`&&`/`||`/`;`/`|` 串接）
-2. **Windows 路徑**：可能因 tokenizer 解析失敗
-3. **解決方法**：改用 `"Bash"` 允許所有 Bash 指令，或接受上述限制
+2. **解決方法**：改用 `"Bash"` 允許所有 Bash 指令，或接受上述限制
+
+---
+
+## 危險命令模式（DANGEROUS_BASH_PATTERNS）
+
+來源：外流原始碼 2.1.88 `utils/permissions/dangerousPatterns.ts`
+
+這些 pattern 被用於 `isDangerousBashPermission()` 判斷：當 allow 規則的前綴是這些直譯器/shell/工具時，在 `auto` 模式入口時會被剝除（因為允許這些前綴等於允許任意程式碼執行）。
+
+### DANGEROUS_BASH_PATTERNS（所有用戶）
+
+**直譯器：** `python`, `python3`, `python2`, `node`, `deno`, `tsx`, `ruby`, `perl`, `php`, `lua`
+
+**套件執行器：** `npx`, `bunx`, `npm run`, `yarn run`, `pnpm run`, `bun run`
+
+**Shells：** `bash`, `sh`, `zsh`, `fish`
+
+**特殊：** `eval`, `exec`, `env`, `xargs`, `sudo`, `ssh`
+
+### ANT-ONLY 追加（`USER_TYPE === 'ant'`）
+
+```
+fa run, coo（cluster code launcher）,
+gh, gh api,
+curl, wget,
+git,
+kubectl, aws, gcloud, gsutil
+```
+
+> **設計說明（原始碼注釋）**：這些是 Anthropic 內部依據 sandbox dotfile 數據判定的「empirical-risk」命令，並非普適的「此工具不安全」聲明，外部用戶不受影響。
+
+---
+
+## 權限決策完整流程（`hasPermissionsToUseToolInner`）
+
+來源：外流原始碼 2.1.88 `utils/permissions/permissions.ts` `hasPermissionsToUseToolInner()`（lines 1158–1319）
+
+### Inner 函式（步驟 1–3）
+
+```
+1a. denyRules 整工具比對 → deny（立即）
+1b. askRules 整工具比對 → ask（除非 sandbox auto-allow）
+1c. tool.checkPermissions(input) → 工具自身的 content-level 判斷
+      （例：BashTool 在這裡比對 prefix/wildcard/exact 規則）
+1d. 工具回傳 deny → deny
+1e. tool.requiresUserInteraction() && 'ask' → ask（強制人工確認）
+1f. content-specific ask rule → ask（繞不過，即使 bypassPermissions）
+1g. safetyCheck（.git/ .claude/ .vscode/ shell configs）→ ask（繞不過）
+2a. bypassPermissions 模式 → allow
+2b. allowRules 整工具比對 → allow
+3.  passthrough → ask（預設）
+```
+
+### Outer 函式（後處理，`hasPermissionsToUseTool`）
+
+Inner 回傳 `ask` 後，outer 再做以下處理：
+
+| 條件 | 結果 |
+|------|------|
+| mode = `dontAsk` | `ask` → `deny`（直接拒絕，不詢問） |
+| mode = `auto` 且 feature `TRANSCRIPT_CLASSIFIER` 啟用 | 進入 **auto mode 分類器流程** |
+| mode = `plan` 且 `autoModeActive` | 同上 |
+| shouldAvoidPermissionPrompts（headless）| 執行 PermissionRequest hook，hook 無回應 → `deny` |
+
+### Auto Mode 分類器流程（`TRANSCRIPT_CLASSIFIER`）
+
+在 `ask` 結果進入 auto mode 時，有三條分支（按優先順序）：
+
+```
+Fast-path 1：acceptEdits 模式下會允許（非 Agent/REPL 工具）→ allow，不呼叫分類器
+Fast-path 2：工具在 safe tool allowlist → allow，不呼叫分類器
+Classifier：呼叫 classifyYoloAction()（yoloClassifier）→ shouldBlock=false → allow / shouldBlock=true → deny
+```
+
+分類器例外：
+- `classifierResult.transcriptTooLong` → 回退到人工確認（headless 則 AbortError）
+- `classifierResult.unavailable`（API error）→ `tengu_iron_gate_closed` flag 控制 fail-closed vs 允許
+
+---
+
+## 規則來源（PermissionRuleSource）
+
+來源：外流原始碼 2.1.88 `utils/permissions/permissions.ts`（line 109–114）
+
+| 來源 | 說明 |
+|------|------|
+| `localSettings` | 專案本地 `.claude/settings.local.json` |
+| `projectSettings` | 專案 `.claude/settings.json`（提交至 repo） |
+| `userSettings` | 全域 `~/.claude/settings.json` |
+| `flagSettings` | Feature flag 注入的規則 |
+| `policySettings` | 組織/企業政策規則 |
+| `cliArg` | CLI 啟動參數 `--allow-permissions` 等 |
+| `command` | 對話中動態添加（`/permissions` 指令） |
+| `session` | 單次 session 臨時規則 |
+
+優先順序：deny 規則在 allow 規則之前檢查（步驟 1a > 步驟 2b）。
+
+---
+
+## 工具名稱的歷史別名（Legacy Tool Name Aliases）
+
+來源：外流原始碼 2.1.88 `utils/permissions/permissionRuleParser.ts`
+
+| 舊名稱 | 現名稱 | 說明 |
+|------|------|------|
+| `Task` | `Agent` | Agent 工具 |
+| `KillShell` | `TaskStop` | 停止工具執行 |
+| `AgentOutputTool` | `TaskOutput` | Agent 輸出工具 |
+| `BashOutputTool` | `TaskOutput` | 同上 |
+| `Brief` | （KAIROS feature flag 決定） | 內部 KAIROS 模式 |
+
+permission rules 中的舊名稱會自動正規化為現名稱（`normalizeLegacyToolName()`）。
 
 ---
 
