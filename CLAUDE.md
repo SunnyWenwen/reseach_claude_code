@@ -41,13 +41,22 @@
 
 ### 3. Claude Code 原始碼（找不到或太細的機制才用）
 
-可在 237MB 執行檔中搜尋 minified JS bundle（無加密）。
+有兩種管道，優先用外流原始碼（可讀性高）：
+
+#### 3a. 外流原始碼 2.1.88（優先）
+
+2026/03/31 Anthropic 意外將 59.8MB source map 打包進 npm `@anthropic-ai/claude-code@2.1.88`，暴露完整 TypeScript 原始碼（51.2 萬行）。函式名稱可讀（如 `getSimpleDoingTasksSection`）。
+
+- 參考整理：[Leonxlnx/claude-code-system-prompts](https://github.com/Leonxlnx/claude-code-system-prompts)
+- 記錄時附上函式名稱（例如：「來源：外流原始碼 2.1.88 `getSimpleDoingTasksSection`」）
+
+#### 3b. Binary 執行檔（次選）
+
+可在 237MB 執行檔中搜尋 minified JS bundle（無加密），函式名為 minified（如 `Xs6`）。
 
 - 執行檔位置：`C:\Users\User\.local\share\claude\versions\{version}`
 - 搜尋方式：Python regex 或 `strings` + grep（見「Claude Code 程式碼位置」）
-- 記錄時附上函式名稱或特徵字串（例如：「來源：binary `Nc
-
- 函式`」）
+- 記錄時附上函式名稱或特徵字串（例如：「來源：binary 2.1.76 `Xs6` 函式」）
 
 ## 專案結構
 
