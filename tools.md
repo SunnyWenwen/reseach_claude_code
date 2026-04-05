@@ -94,6 +94,67 @@ flowchart TD
     B -- 否 --> E[回傳給使用者，停止]
 ```
 
+#### 原始碼驗證（來源：外流原始碼 2.1.88 `query.ts`）
+
+Loop 的實際結構是 **`while (true)`**（`query.ts:307`），**非遞迴**。終止信號是 `needsFollowUp` flag：
+
+```typescript
+// query.ts:554-558
+// Note: stop_reason === 'tool_use' is unreliable — it's not always set correctly.
+// Set during streaming whenever a tool_use block arrives — the sole loop-exit signal.
+const toolUseBlocks: ToolUseBlock[] = []
+let needsFollowUp = false
+```
+
+```typescript
+// query.ts:831-834
+if (msgToolUseBlocks.length > 0) {
+  toolUseBlocks.push(...msgToolUseBlocks)
+  needsFollowUp = true   // ← 有 tool_use → 繼續
+}
+
+// query.ts:1062
+if (!needsFollowUp) {
+  // ... stop hook 處理
+  return { reason: 'completed' }  // ← 正常終止
+}
+```
+
+**重要**：`stop_reason === 'tool_use'` **不可靠**（原始碼明確注解）。實際判斷依據是 streaming 過程中是否收到 tool_use block。
+
+#### Loop 的終止原因列表（`reason` 欄位）
+
+| reason | 說明 |
+|--------|------|
+| `completed` | 正常完成（無 tool_use，stop hook 通過）|
+| `max_turns` | 達到 `maxTurns` 上限（`query.ts:1705`）|
+| `aborted_streaming` | 使用者 Ctrl+C（streaming 途中中斷）|
+| `aborted_tools` | 使用者 Ctrl+C（工具執行途中中斷）|
+| `hook_stopped` | Stop hook 阻止繼續 |
+| `stop_hook_prevented` | Stop hook 回傳 prevent_continuation |
+| `blocking_limit` | Context 達硬性 token 上限 |
+| `model_error` | API 呼叫錯誤 |
+| `prompt_too_long` | Prompt 超長（無法自動 compact 時）|
+
+#### Tools 的 refresh 機制（與 ToolSearch 相關）
+
+每次 loop iteration 結束、準備下一輪前，有一個 `refreshTools()` 呼叫：
+
+```typescript
+// query.ts:1660-1670
+if (updatedToolUseContext.options.refreshTools) {
+  const refreshedTools = updatedToolUseContext.options.refreshTools()
+  if (refreshedTools !== updatedToolUseContext.options.tools) {
+    updatedToolUseContext = {
+      ...updatedToolUseContext,
+      options: { ...updatedToolUseContext.options, tools: refreshedTools },
+    }
+  }
+}
+```
+
+這是 ToolSearch 讓新工具在下一輪可用的機制入口（待 T03 確認細節）。
+
 ### 例外情況
 
 | 情況 | 說明 |
@@ -103,7 +164,7 @@ flowchart TD
 | **背景 Bash（`run_in_background`）** | 不阻塞，inference 繼續；結果以 `<task-notification>` 非同步通知 |
 | **Subagent** | 有自己獨立的 agentic loop，不佔主 agent 的推理次數 |
 
-來源：`6370316b...jsonl`，各 TOOL_CALL 之間的時間間隔（2~3 秒）可觀察到 LLM 推理。
+來源：`6370316b...jsonl`（行為觀察）；外流原始碼 2.1.88 `query.ts` `while(true)` loop（原始碼驗證）。
 
 ---
 
@@ -355,34 +416,72 @@ Skill 在主 session 執行，主 Claude 有全部工具。若不限制，skill 
 
 ## ToolSearch
 
-**元工具（工具的工具）**，唯一預設就存在的 deferred 工具載入器。
+**元工具（工具的工具）**，用於動態發現 deferred 工具。
 
 ### 查詢模式
 
 | 模式 | 範例 | 說明 |
 |------|------|------|
-| 直接選取 | `select:Glob` | 知道工具名稱時直接載入 |
-| 多工具選取 | `select:Read,Edit,Grep` | 一次載入多個 |
+| 直接選取 | `select:Glob` | 知道工具名稱時直接選取 |
+| 多工具選取 | `select:Read,Edit,Grep` | 一次選取多個 |
 | 關鍵字搜尋 | `"list directory"` | 不確定工具名稱時搜尋 |
 
-### 工具載入流程
+### 真實運作機制（來源：外流原始碼 2.1.88 `utils/toolSearch.ts`）
+
+ToolSearch **不是** 把 schema 文字注入 tool_result，而是透過一套 **beta API 機制**運作：
 
 ```
-Claude 需要某工具
+tools[] 中的 deferred 工具標記 defer_loading: true
     ↓
-ToolSearch("select:ToolName")   ← 將工具 schema 載入 context
+Claude 呼叫 ToolSearch("select:ToolName")
     ↓
-直接呼叫 ToolName(...)
+API 在 tool_result 中返回 tool_reference 區塊
+    ↓
+{ type: 'tool_reference', tool_name: 'ToolName' }
+    ↓
+API server-side 展開成完整 schema 讓 Claude 看到
+    ↓
+Claude 直接呼叫 ToolName(...)
 ```
+
+**關鍵**：`tool_reference` 是 Anthropic beta API 功能，由伺服器端展開，不進入 JSONL 的標準欄位，所以我們的 session JSONL 中 ToolSearch tool_result 顯示為空——實際上有內容，只是 beta 格式解析器未覆蓋。
+
+### tools[] 陣列始終穩定
+
+deferred 工具「始終在 `tools[]` 中」，只是帶有 `defer_loading: true`：
+
+```typescript
+// tools[] 從 session 開始到結束結構不變
+tools: [
+  { name: 'Bash', ... },           // pre-loaded，完整 schema
+  { name: 'Read', ... },           // pre-loaded，完整 schema
+  { name: 'SomeMCPTool',           // deferred
+    defer_loading: true, ... },
+]
+```
+
+這就是為什麼 ToolSearch 前後 **KV cache 不 bust**（JSONL 驗證：`6370316b`，cache_read 單調遞增）：tools[] 結構穩定，prompt cache 不受影響。
+
+### toolSchemaCache（來源：`utils/toolSchemaCache.ts`）
+
+> "Tool schemas render at server position 2 (before system prompt), so any byte-level change busts the entire ~11K-token tool block AND everything downstream."
+
+工具 schema 在 KV cache 中排在 **system prompt 之前（position 2）**。任何 schema 變動都會 bust 整個 tool block + 下游所有 messages 的 cache。因此 Claude Code 用 `toolSchemaCache` 把 schema 在 session 內 memoize，防止 GrowthBook gate flip 或 MCP 重連造成不必要的 cache bust。
 
 ### 有效範圍
 
-- **同一 session**：載入一次後可直接呼叫，不需重複 ToolSearch
-- **跨 session**：每次新對話都要重新載入，context 不跨 session 保留
+- **同一 session**：`tool_reference` 已在 message history → 下一輪 API 呼叫時 server 知道已發現，可直接使用
+- **跨 session**：history 清空，需重新 ToolSearch
 
-### 效率影響
+### ToolSearch 的停用條件
 
-每次 ToolSearch = 多一次 tool call + 多一次 LLM 推理（約 2~3 秒）。預載工具省去此步驟。
+| 條件 | 行為 |
+|------|------|
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=true` | 強制 standard 模式（不 defer） |
+| `ENABLE_TOOL_SEARCH=false` | standard 模式 |
+| Haiku 模型 | 不支援 `tool_reference`，強制 standard |
+| `ENABLE_TOOL_SEARCH=auto:N` | 工具 token 超過 context N% 才啟用 |
+| 預設（unset） | `tst` 模式：MCP 與 shouldDefer 工具一律 defer |
 
 ---
 
