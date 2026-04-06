@@ -12,6 +12,8 @@
 - **ToolSearch**：載入 deferred 工具的機制與效率影響
 - **工具與 LLM 關係**：哪些工具內部使用 LLM（Agent/Skill/prompt hook）
 - **Tool 定義與載入**：`Tool<>` 介面完整欄位（shouldDefer/alwaysLoad/searchHint/maxResultSizeChars）；buildTool() 工廠 fail-closed 預設；ToolResult 結構；getAllBaseTools() 完整工具清單（含 ANT-ONLY 與 feature-gated）；Subagent 工具限制清單（ALL_AGENT_DISALLOWED/ASYNC_AGENT/IN_PROCESS_TEAMMATE/COORDINATOR）；ToolUseContext 完整欄位
+- **Context 結構**：getUserContext()（claudeMd + currentDate，memoized）；getSystemContext()（gitStatus + cacheBreaker，memoized）；getGitStatus()（平行 git 命令，截斷 2000 chars）；CLAUDE_CODE_DISABLE_CLAUDE_MDS；bare 模式行為；systemPromptInjection ANT-ONLY debug
+- **Task 類型定義**：Task ≠ AgentTool；TaskType 七種（local_bash/local_agent/remote_agent/in_process_teammate/local_workflow/monitor_mcp/dream）；TaskStatus 狀態機；TaskStateBase 共享欄位（id/type/status/outputFile/outputOffset/notified）；Task ID 格式（前綴 + 8 位 base-36）；getAllTasks() registry 模式
 - **Skill 系統**：SKILL.md 結構、觸發方式、動態注入；執行模式（注入/腳本/agent/fork）；Priority 順序（Enterprise > Personal > Project > Plugin）
 - **Output Styles**：直接替換 system prompt（非附加）；三種內建樣式；自訂樣式 frontmatter；下次新 session 才生效
 - **Skill allowed-tools vs Agent 工具權限**：差異與設計原因
@@ -29,6 +31,7 @@
 - **Auto Mode 分類器**：TRANSCRIPT_CLASSIFIER（yoloClassifier）兩階段 XML 分類；bashClassifier 為 ANT-ONLY stub；用戶可透過 `settings.autoMode` 自訂規則
 - **Permission Modes**：acceptEdits/bypassPermissions/dontAsk/plan/default/auto 六種模式；與 allow 規則的差異
 - **規則來源與 Legacy 別名**：8 種 PermissionRuleSource；Task→Agent 等歷史別名自動正規化
+- **Permission Mode 完整定義**：7 種 mode（default/plan/acceptEdits/bypassPermissions/dontAsk/auto/bubble）；auto 和 bubble 為 ANT-ONLY；ExternalPermissionMode 排除 internal modes；toExternalPermissionMode() 映射；permissionModeSchema Zod schema
 
 ## [session.md](session.md) — Session 記錄
 

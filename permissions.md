@@ -399,3 +399,54 @@ permission rules 中的舊名稱會自動正規化為現名稱（`normalizeLegac
 | **注入偵測** | 即使命令已在 allowlist，疑似 injection 的 Bash 命令仍強制詢問 |
 | **Fail-closed** | 無匹配規則的命令一律需要確認（不預設允許） |
 | `/sandbox` | 啟用沙箱模式：檔案系統 + 網路隔離 |
+
+---
+
+## Permission Mode 完整定義（T16）
+
+來源：外流原始碼 2.1.88 `utils/permissions/PermissionMode.ts`（141 行）
+
+### 完整 Mode 清單
+
+| mode | title | symbol | color | external | 說明 |
+|------|-------|--------|-------|----------|------|
+| `default` | Default | — | text | `default` | 預設，每個操作依規則決定是否詢問 |
+| `plan` | Plan Mode | （PAUSE_ICON） | planMode | `plan` | 規劃模式，不執行破壞性操作 |
+| `acceptEdits` | Accept edits | ⏵⏵ | autoAccept | `acceptEdits` | 自動接受檔案編輯，不詢問 |
+| `bypassPermissions` | Bypass Permissions | ⏵⏵ | error | `bypassPermissions` | 繞過所有權限檢查（危險） |
+| `dontAsk` | Don't Ask | ⏵⏵ | error | `dontAsk` | 不詢問，全部自動執行（危險） |
+| `auto` | Auto mode | ⏵⏵ | warning | `default` | **ANT-ONLY**；TRANSCRIPT_CLASSIFIER feature-gated；外部對應 `default` |
+| `bubble` | — | — | — | （排除） | **ANT-ONLY**；未在 PERMISSION_MODE_CONFIG 中，僅在 `isExternalPermissionMode()` 中提及 |
+
+### External vs Internal Modes
+
+`ExternalPermissionMode` = 外部可見模式（排除 `auto` 和 `bubble`）：
+
+```ts
+export function isExternalPermissionMode(mode: PermissionMode): mode is ExternalPermissionMode {
+  if (process.env.USER_TYPE !== 'ant') return true  // 外部用戶全部都是 external mode
+  return mode !== 'auto' && mode !== 'bubble'
+}
+```
+
+`toExternalPermissionMode(mode)`: 將 internal mode 映射到 external（`auto` → `default`）。
+
+### Zod Schema
+
+```ts
+export const permissionModeSchema = lazySchema(() => z.enum(PERMISSION_MODES))
+export const externalPermissionModeSchema = lazySchema(() => z.enum(EXTERNAL_PERMISSION_MODES))
+```
+
+Lazy schema 避免循環 import 問題。
+
+### 工具函式
+
+| 函式 | 說明 |
+|------|------|
+| `permissionModeFromString(str)` | 解析字串，未知值退回 `default` |
+| `permissionModeTitle(mode)` | 完整標題（如 "Plan Mode"） |
+| `permissionModeShortTitle(mode)` | 短標題（如 "Plan"） |
+| `permissionModeSymbol(mode)` | UI 符號（如 "⏵⏵"） |
+| `getModeColor(mode)` | UI 顏色鍵 |
+| `isDefaultMode(mode)` | mode 是 `default` 或 `undefined` |

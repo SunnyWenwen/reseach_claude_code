@@ -1006,3 +1006,138 @@ type ToolResult<T> = {
 - `messages`: 當前對話歷史（隨每輪更新）
 - `contentReplacementState?`: Tool result 外部儲存替換紀錄
 - `localDenialTracking?`: Async subagent 本地 denial 計數（因 setAppState 是 no-op）
+
+---
+
+## Context 結構（T14）
+
+來源：外流原始碼 2.1.88 `context.ts`（189 行）
+
+**注意**：`context.ts` 管理的是 **system prompt 動態 context 組裝**（git 狀態、CLAUDE.md 內容），不是 `ToolUseContext`（Tool.ts 已記錄）。
+
+### getUserContext()
+
+```ts
+export const getUserContext = memoize(async () => {
+  return {
+    claudeMd,           // CLAUDE.md 內容（若有）
+    currentDate: "Today's date is YYYY-MM-DD.",
+  }
+})
+```
+
+- **memoized**：session 期間只呼叫一次；快取在 module level
+- **CLAUDE.md 條件**：
+  - `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`：強制關閉
+  - `--bare` 模式 + 無 `--add-dir`：關閉（bare 模式只忽略自動發現，不忽略明確指定）
+- `setCachedClaudeMdContent()`: 同時快取供 yoloClassifier 讀取（避免 import cycle）
+- 結果用作 `userContext`，以 `<userContext>` XML tag 形式注入 system prompt 動態部分
+
+### getSystemContext()
+
+```ts
+export const getSystemContext = memoize(async () => {
+  return {
+    gitStatus,      // git 狀態（若為 git repo 且未停用）
+    cacheBreaker,   // ANT-ONLY debug cache breaking
+  }
+})
+```
+
+- **跳過 git status 的條件**：
+  - `CLAUDE_CODE_REMOTE=1`（CCR 環境，避免不必要開銷）
+  - `shouldIncludeGitInstructions()` 返回 false
+
+### getGitStatus()
+
+memoized async function，平行執行以下 git 命令：
+
+```
+git status --short   → truncated at 2000 chars
+git log --oneline -n 5
+git config user.name
+```
+
+plus `getBranch()` and `getDefaultBranch()`
+
+注入到 system prompt 的文字格式：
+```
+This is the git status at the start of the conversation. Note that this status is a snapshot in time...
+Current branch: {branch}
+Main branch (you will usually use this for PRs): {mainBranch}
+Git user: {userName}
+Status: {status}
+Recent commits: {log}
+```
+
+**截斷**：超過 2000 字元時截斷並附上提示（可用 BashTool 執行 git status 取得完整輸出）
+
+### systemPromptInjection（ANT-ONLY debug）
+
+feature gate: `BREAK_CACHE_COMMAND`。`setSystemPromptInjection(value)` 更新注入並立即清除 memoize cache，讓下次呼叫重新計算含新注入的 context。
+
+---
+
+## Task 類型定義（T15）
+
+來源：外流原始碼 2.1.88 `Task.ts`（125 行）、`tasks.ts`（39 行）
+
+### Task vs Agent 的關係
+
+**Task ≠ Agent 工具**。`Task.ts` 定義的是**後台工作任務**（background task workers），不是 Agent 工具。AgentTool 會創建一個 `local_agent` 類型的 Task，但 Task 系統本身更廣。
+
+### TaskType 枚舉
+
+| type | 前綴 | 說明 |
+|------|------|------|
+| `local_bash` | `b` | 本地 Bash 命令（LocalShellTask） |
+| `local_agent` | `a` | 本地 agent（AgentTool 的後台代理） |
+| `remote_agent` | `r` | 遠端 agent |
+| `in_process_teammate` | `t` | In-process teammate（協作模式） |
+| `local_workflow` | `w` | 本地 workflow（feature gate: WORKFLOW_SCRIPTS） |
+| `monitor_mcp` | `m` | MCP monitor（feature gate: MONITOR_TOOL） |
+| `dream` | `d` | Dream task |
+
+### TaskStatus 狀態機
+
+```
+pending → running → completed
+                  → failed
+                  → killed
+```
+
+`isTerminalTaskStatus()`: `completed` | `failed` | `killed` 為終態，後續不再轉換。
+
+### TaskStateBase 共享欄位
+
+```ts
+type TaskStateBase = {
+  id: string           // 前綴字母 + 8 位 base-36 隨機字串（2.8 兆組合）
+  type: TaskType
+  status: TaskStatus
+  description: string
+  toolUseId?: string   // 關聯的 tool_use block ID
+  startTime: number
+  endTime?: number
+  totalPausedMs?: number
+  outputFile: string   // 輸出檔案路徑（task output 暫存）
+  outputOffset: number // 已讀取的輸出偏移量
+  notified: boolean    // 是否已通知使用者
+}
+```
+
+### Task 介面（kill 方法）
+
+```ts
+type Task = {
+  name: string
+  type: TaskType
+  kill(taskId: string, setAppState: SetAppState): Promise<void>
+}
+```
+
+spawn/render 方法已在 #22546 移除（不再需要多態呼叫）。
+
+### tasks.ts 工廠
+
+`getAllTasks()` / `getTaskByType(type)` — 與 `getAllBaseTools()` 相同的 registry 模式。可用 task: LocalShellTask, LocalAgentTask, RemoteAgentTask, DreamTask, LocalWorkflowTask（WORKFLOW_SCRIPTS）, MonitorMcpTask（MONITOR_TOOL）。
