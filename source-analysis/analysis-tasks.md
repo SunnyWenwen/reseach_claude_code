@@ -177,7 +177,7 @@
 | T09 | ✅ 完成 | Claude | 2026-04-06 | `model.md` |
 | T10 | ✅ 完成 | Claude | 2026-04-06 | `tools.md` |
 | T11 | ✅ 完成 | Claude | 2026-04-06 | `session.md` |
-| T12 | ⬜ 待分析 | — | — | — |
+| T12 | ✅ 完成 | Claude | 2026-04-06 | `model.md`、`tools.md` |
 | T13 | ✅ 完成 | Claude | 2026-04-06 | `session.md` |
 | T14 | ✅ 完成 | Claude | 2026-04-06 | `tools.md` |
 | T15 | ✅ 完成 | Claude | 2026-04-06 | `tools.md` |

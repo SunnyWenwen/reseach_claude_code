@@ -55,6 +55,71 @@ Beta flags：
 
 ---
 
+## Feature Flags 與 Main 入口（T12）
+
+來源：外流原始碼 2.1.88 `main.tsx`（4,690 行）
+
+### 兩種 Feature Flag 機制
+
+| 機制 | 用途 | 函式 |
+|------|------|------|
+| `feature()` from `bun:bundle` | **編譯期** dead code elimination；`true`/`false` 常量折疊 | `feature('KAIROS')`, `feature('BG_SESSIONS')` 等 |
+| `getFeatureValue_CACHED_MAY_BE_STALE()` | **執行期** 動態 flag，從 GrowthBook 讀取快取值 | `getFeatureValue_CACHED_MAY_BE_STALE('tengu_otk_slot_v1', false)` 等 |
+
+**GrowthBook 初始化**（main.tsx:2020）：
+```ts
+// 特殊情況才立即初始化（ant + 指定 model 但非 default + 無 env override）
+await initializeGrowthBook()
+// 其他情況：auth 變更後刷新
+refreshGrowthBookAfterAuthChange()
+```
+
+`L$()` 函式未出現在 main.tsx — 該函式可能在 binary 版本中，外流原始碼中 feature flag 的主要入口是 `getFeatureValue_CACHED_MAY_BE_STALE()`。
+
+### tengu_* 動態 Flag 清單（main.tsx 中）
+
+| flag | 預設值 | 說明 |
+|------|--------|------|
+| `tengu_cicada_nap_ms` | 0 | 啟動 prefetch 節流時間（ms） |
+| `tengu_miraculo_the_bard` | false | Fast mode prefetch kill switch |
+| `tengu_remote_backend` | false | 遠端 TUI backend 開關 |
+| `tengu_kairos` | false | KAIROS/assistant mode GrowthBook 開關 |
+| `tengu_otk_slot_v1` | false | max_output_tokens 8k→64k escalation（query.ts） |
+
+**注意**：`tengu_sotto_voce` 和 `tengu_bergotte_lantern` 未出現在 main.tsx（可能在 systemPrompt.ts 或其他檔案）。
+
+### initialPermissionMode（啟動時 Permission Mode）
+
+```ts
+// CLI arg → 初始化
+const { mode: permissionMode, notification } = initialPermissionModeFromCLI({
+  permissionModeCli,      // --permission-mode <mode>
+  dangerouslySkipPermissions,  // --dangerously-skip-permissions
+})
+setSessionBypassPermissionsMode(permissionMode === 'bypassPermissions')
+```
+
+Auto mode 啟用條件（feature gate: `TRANSCRIPT_CLASSIFIER`）：
+- `--enable-auto-mode` CLI flag
+- `--permission-mode auto`
+- `isDefaultPermissionModeAuto()` 為 true
+
+### KAIROS（Autonomous Assistant Mode）
+
+KAIROS 是 Claude Code 的**自主助理模式**（autonomous daemon/assistant mode），ANT-ONLY（`feature('KAIROS')` compile-time gate）。
+
+**啟用流程**（main.tsx:1056-1095）：
+1. `--assistant` CLI flag → `markAssistantForced()`
+2. 檢查 trust dialog 已接受（`checkHasTrustDialogAccepted()`）
+3. `isKairosEnabled()` GrowthBook 動態 check
+4. 啟用後：`--brief` 模式、`setKairosActive(true)`、`initializeAssistantTeam()`
+
+相關模組（compile-time conditional import）：
+- `./assistant/index.js` — KAIROS 主模組
+- `./assistant/gate.js` — KAIROS 啟用判斷
+
+`BG_SESSIONS` feature flag（main.tsx:1122）：背景 session 功能，與 KAIROS 相關聯；`--agent` CLI 指定時設置 `CLAUDE_CODE_AGENT` env var。
+
 ## Query 處理流程（T09）
 
 來源：外流原始碼 2.1.88 `query.ts`（1,729 行）、`QueryEngine.ts`

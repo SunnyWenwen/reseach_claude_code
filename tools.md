@@ -903,6 +903,44 @@ keep-coding-instructions: true  # 保留預設的程式碼驗證指令（預設 
 
 ---
 
+## MCP Server 初始化流程（T12）
+
+來源：外流原始碼 2.1.88 `main.tsx`（4,690 行）
+
+### 初始化時序
+
+MCP 配置載入在啟動早期作為非阻塞 Promise 啟動（main.tsx:1805）：
+
+```
+[啟動階段]
+  ↓
+getClaudeCodeMcpConfigs() → mcpConfigPromise（非阻塞）
+  ↓ （等待 trust dialog 後）
+prefetchAllMcpResources(regularMcpConfigs) → localMcpPromise
+prefetchAllMcpResources(claudeaiConfigs)   → claudeaiMcpPromise（可選）
+  ↓
+Promise.all → { clients, tools, commands }（合併去重）
+```
+
+### 兩種 MCP 配置類型
+
+| 類型 | type 欄位 | 說明 |
+|------|-----------|------|
+| regular (`ScopedMcpServerConfig`) | 非 `'sdk'` | 一般 MCP server（stdio/sse） |
+| SDK (`McpSdkServerConfig`) | `'sdk'` | SDK 整合的特殊配置 |
+
+啟動時按 `type === 'sdk'` 分離，分別處理。
+
+### 特殊條件
+
+- `--strict-mcp-config` 或 `--bare` 模式：直接返回空 servers
+- `isNonInteractiveSession`（SDK/print 模式）：直接返回空 clients/tools/commands（跳過 MCP prefetch）
+- tools 和 commands 以 name 去重（`uniqBy`）
+
+### 工具合併注意
+
+MCP tools 加入 tool pool 時以 `uniqBy(name)` 去重；在 `assembleToolPool()` 中，built-in tools 排字母序為前綴，MCP tools 排字母序附後（cache 穩定性設計）。
+
 ## Tool 定義與載入（T10）
 
 來源：外流原始碼 2.1.88 `Tool.ts`（792 行）、`tools.ts`（389 行）、`constants/tools.ts`（112 行）

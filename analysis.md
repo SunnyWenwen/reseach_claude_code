@@ -11,6 +11,7 @@
 - **為何有 Read/Write**：與 Bash 的本質差異（權限粒度、token 限制、diff、寫入限制）
 - **ToolSearch**：載入 deferred 工具的機制與效率影響
 - **工具與 LLM 關係**：哪些工具內部使用 LLM（Agent/Skill/prompt hook）
+- **MCP Server 初始化**：早期非阻塞 Promise 啟動；regular vs SDK 配置分離；prefetchAllMcpResources；isNonInteractiveSession 跳過；tools/commands uniqBy 去重
 - **Tool 定義與載入**：`Tool<>` 介面完整欄位（shouldDefer/alwaysLoad/searchHint/maxResultSizeChars）；buildTool() 工廠 fail-closed 預設；ToolResult 結構；getAllBaseTools() 完整工具清單（含 ANT-ONLY 與 feature-gated）；Subagent 工具限制清單（ALL_AGENT_DISALLOWED/ASYNC_AGENT/IN_PROCESS_TEAMMATE/COORDINATOR）；ToolUseContext 完整欄位
 - **Context 結構**：getUserContext()（claudeMd + currentDate，memoized）；getSystemContext()（gitStatus + cacheBreaker，memoized）；getGitStatus()（平行 git 命令，截斷 2000 chars）；CLAUDE_CODE_DISABLE_CLAUDE_MDS；bare 模式行為；systemPromptInjection ANT-ONLY debug
 - **Task 類型定義**：Task ≠ AgentTool；TaskType 七種（local_bash/local_agent/remote_agent/in_process_teammate/local_workflow/monitor_mcp/dream）；TaskStatus 狀態機；TaskStateBase 共享欄位（id/type/status/outputFile/outputOffset/notified）；Task ID 格式（前綴 + 8 位 base-36）；getAllTasks() registry 模式
@@ -53,6 +54,7 @@
 
 - **Extended Thinking**：thinking 明文 vs 加密兩種狀態、設定方式
 - **System Prompt 結構**：`dj()` 組裝函式；靜態 section 固定順序（Ws6/js6/Es6/Ts6/Xs6/Js6/Vs6）；動態 section（memory/env/language/output_style/mcp）；Output Style 對 system prompt 的影響；feature flags（tengu_sotto_voce 等）；CLAUDE_CODE_SIMPLE 極簡模式
+- **Feature Flags 與 Main 入口**：`feature()` compile-time elimination vs `getFeatureValue_CACHED_MAY_BE_STALE()` runtime GrowthBook；tengu_* flag 清單；initialPermissionMode 啟動流程；KAIROS autonomous assistant mode（ANT-ONLY feature gate）；BG_SESSIONS
 - **Query 處理流程**：`query()` vs `queryLoop()` vs `QueryEngine` 三層分工；per-iteration 7 段 pipeline（applyToolResultBudget→snip→microcompact→contextCollapse→autocompact→callModel）；Streaming fallback/Model fallback 機制；Extended Thinking 三大規則；`SYSTEM_PROMPT_DYNAMIC_BOUNDARY` cache 分界；loop 終止 reason 清單
 
 ## [prompt-schema.md](prompt-schema.md) — Prompt 與 Schema 原文
