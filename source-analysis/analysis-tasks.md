@@ -175,7 +175,7 @@
 | T07 | ✅ 完成 | Claude | 2026-04-06 | `permissions.md` |
 | T08 | ✅ 完成 | Claude | 2026-04-06 | `source-analysis/undercover.md` |
 | T09 | ✅ 完成 | Claude | 2026-04-06 | `model.md` |
-| T10 | ⬜ 待分析 | — | — | — |
+| T10 | ✅ 完成 | Claude | 2026-04-06 | `tools.md` |
 | T11 | ⬜ 待分析 | — | — | — |
 | T12 | ⬜ 待分析 | — | — | — |
 | T13 | ⬜ 待分析 | — | — | — |

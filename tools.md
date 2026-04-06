@@ -900,3 +900,109 @@ keep-coding-instructions: true  # 保留預設的程式碼驗證指令（預設 
 ### 設定方式
 
 `/config > Output style` 選取，儲存至 `.claude/settings.local.json`。
+
+---
+
+## Tool 定義與載入（T10）
+
+來源：外流原始碼 2.1.88 `Tool.ts`（792 行）、`tools.ts`（389 行）、`constants/tools.ts`（112 行）
+
+### Tool 介面完整欄位
+
+`Tool<Input, Output, P>` 類型定義（Tool.ts:362）主要欄位：
+
+| 欄位 | 必填 | 說明 |
+|------|------|------|
+| `name` | ✓ | 工具名稱（唯一識別） |
+| `aliases?` | — | 向後相容的舊名稱列表 |
+| `searchHint?` | — | 供 ToolSearch 關鍵字匹配的 3-10 字提示 |
+| `shouldDefer?` | — | `true` = deferred 工具（需先 ToolSearch 才能呼叫） |
+| `alwaysLoad?` | — | `true` = 永不 defer，即使 ToolSearch 啟用也在 turn 1 載入 |
+| `maxResultSizeChars` | ✓ | tool result 外部儲存閾值；`Infinity` = 永不外部儲存 |
+| `strict?` | — | 啟用 API strict mode（需 feature flag `tengu_tool_pear`） |
+| `inputSchema` | ✓ | Zod schema（用於參數驗證） |
+| `inputJSONSchema?` | — | MCP 工具可直接提供 JSON Schema（不走 Zod） |
+| `isMcp?` | — | MCP 工具標記 |
+| `mcpInfo?` | — | `{ serverName, toolName }`，MCP 工具的伺服器來源 |
+
+**必實作的方法**：`call()`, `prompt()`, `isConcurrencySafe()`, `isEnabled()`, `isReadOnly()`, `mapToolResultToToolResultBlockParam()`, `renderToolUseMessage()`, `userFacingName()`, `toAutoClassifierInput()`
+
+### Pre-loaded vs Deferred 區分
+
+| 旗標 | 說明 |
+|------|------|
+| `shouldDefer: true` | Deferred tool；API 端以 `defer_loading: true` 傳送；模型必須先呼叫 ToolSearch 才能使用 |
+| `alwaysLoad: true` | 永不 defer，MCP 工具可透過 `_meta['anthropic/alwaysLoad']` 設定 |
+| 兩者皆無 | ToolSearch 停用時：pre-loaded；ToolSearch 啟用時：依 ToolSearch 邏輯決定 |
+
+### `buildTool()` 工廠函式
+
+Tool.ts:783。提供安全預設值（fail-closed where it matters），所有工具定義應透過此函式建構：
+
+| 方法 | 預設值 |
+|------|--------|
+| `isEnabled()` | `true` |
+| `isConcurrencySafe()` | `false` |
+| `isReadOnly()` | `false` |
+| `isDestructive()` | `false` |
+| `checkPermissions()` | `{ behavior: 'allow', updatedInput }` |
+| `toAutoClassifierInput()` | `''`（跳過安全分類器） |
+| `userFacingName()` | tool `name` |
+
+### Tool 執行結果結構
+
+`ToolResult<T>`（Tool.ts:321）：
+
+```ts
+type ToolResult<T> = {
+  data: T                        // 主要 output
+  newMessages?: Message[]        // 附帶新增的訊息（如 subagent 回傳）
+  contextModifier?: (ctx: ToolUseContext) => ToolUseContext  // 非並發安全工具可修改 context
+  mcpMeta?: {                    // MCP 協定 metadata
+    _meta?: Record<string, unknown>
+    structuredContent?: Record<string, unknown>
+  }
+}
+```
+
+### 工具清單（getAllBaseTools()，tools.ts:193）
+
+**核心工具（外部版本）**：AgentTool, TaskOutputTool, BashTool, GlobTool, GrepTool（無內建 search 時）, ExitPlanModeV2Tool, FileReadTool, FileEditTool, FileWriteTool, NotebookEditTool, WebFetchTool, TodoWriteTool, WebSearchTool, TaskStopTool, AskUserQuestionTool, SkillTool, EnterPlanModeTool
+
+**ANT-ONLY 工具**（外部版本 dead-code-eliminated）：ConfigTool, TungstenTool, REPLTool
+
+**Feature-gated 工具**：WebBrowserTool, ToolSearchTool（`isToolSearchEnabledOptimistic()`）, TaskCreateTool/TaskGetTool/TaskUpdateTool/TaskListTool（`isTodoV2Enabled()`）, EnterWorktreeTool/ExitWorktreeTool（`isWorktreeModeEnabled()`）, SleepTool, MonitorTool, WorkflowTool 等
+
+**注意**：工具集需與 Statsig `claude_code_global_system_caching` 保持同步（tools.ts:191 注釋）。
+
+### Subagent 工具限制清單（constants/tools.ts）
+
+| 集合 | 說明 |
+|------|------|
+| `ALL_AGENT_DISALLOWED_TOOLS` | 所有 subagent 禁用：TaskOutputTool, ExitPlanModeTool, EnterPlanModeTool, AgentTool（非 ANT）, AskUserQuestionTool, TaskStopTool |
+| `ASYNC_AGENT_ALLOWED_TOOLS` | 非同步 agent 允許：Read/Search/Edit/Skill/ToolSearch/Worktree 類 |
+| `IN_PROCESS_TEAMMATE_ALLOWED_TOOLS` | In-process teammate 專用：Task* tools, SendMessage, Cron tools |
+| `COORDINATOR_MODE_ALLOWED_TOOLS` | Coordinator 模式：AgentTool, TaskStopTool, SendMessage, SyntheticOutput |
+
+**ANT 特權**：ANT 環境允許 nested agents（`AgentTool` 從 `ALL_AGENT_DISALLOWED_TOOLS` 排除）。
+
+### ToolUseContext 完整結構（Tool.ts:158）
+
+工具執行時傳入的完整上下文：
+
+**options 欄位**（不可變）：`tools`, `mainLoopModel`, `thinkingConfig`, `commands`, `mcpClients`, `isNonInteractiveSession`, `refreshTools?`
+
+**狀態存取**：
+- `getAppState()` / `setAppState()`: 全域 App 狀態；subagent 的 `setAppState` 可能是 no-op
+- `setAppStateForTasks?`: Session-scope 狀態更新，永遠到達 root store（即使 subagent）
+
+**識別欄位**：
+- `agentId?`: 僅 subagent 設定；主執行緒為 `undefined`
+- `agentType?`: Subagent 類型名稱
+
+**資源欄位**：
+- `abortController`: 取消信號
+- `readFileState`: 文件讀取 LRU cache
+- `messages`: 當前對話歷史（隨每輪更新）
+- `contentReplacementState?`: Tool result 外部儲存替換紀錄
+- `localDenialTracking?`: Async subagent 本地 denial 計數（因 setAppState 是 no-op）

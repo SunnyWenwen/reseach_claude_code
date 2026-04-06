@@ -11,6 +11,7 @@
 - **為何有 Read/Write**：與 Bash 的本質差異（權限粒度、token 限制、diff、寫入限制）
 - **ToolSearch**：載入 deferred 工具的機制與效率影響
 - **工具與 LLM 關係**：哪些工具內部使用 LLM（Agent/Skill/prompt hook）
+- **Tool 定義與載入**：`Tool<>` 介面完整欄位（shouldDefer/alwaysLoad/searchHint/maxResultSizeChars）；buildTool() 工廠 fail-closed 預設；ToolResult 結構；getAllBaseTools() 完整工具清單（含 ANT-ONLY 與 feature-gated）；Subagent 工具限制清單（ALL_AGENT_DISALLOWED/ASYNC_AGENT/IN_PROCESS_TEAMMATE/COORDINATOR）；ToolUseContext 完整欄位
 - **Skill 系統**：SKILL.md 結構、觸發方式、動態注入；執行模式（注入/腳本/agent/fork）；Priority 順序（Enterprise > Personal > Project > Plugin）
 - **Output Styles**：直接替換 system prompt（非附加）；三種內建樣式；自訂樣式 frontmatter；下次新 session 才生效
 - **Skill allowed-tools vs Agent 工具權限**：差異與設計原因
