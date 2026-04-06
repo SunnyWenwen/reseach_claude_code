@@ -113,6 +113,62 @@ JSONL 無法還原「是否曾詢問過確認」。
 
 ---
 
+## Auto Mode 分類器（TRANSCRIPT_CLASSIFIER / Yolo Classifier）
+
+來源：外流原始碼 2.1.88 `utils/permissions/yoloClassifier.ts`、`utils/permissions/bashClassifier.ts`
+
+### bashClassifier.ts：ANT-ONLY 功能，外部版本為 stub
+
+```ts
+// Stub for external builds - classifier permissions feature is ANT-ONLY
+export function isClassifierPermissionsEnabled(): boolean {
+  return false
+}
+```
+
+`BASH_CLASSIFIER` feature 在外部版本中完全禁用，所有函式回傳 disabled/空值。外部用戶不會觸發此分類器。
+
+### yoloClassifier.ts：Auto Mode 的核心分類器
+
+功能：在 `auto` 模式下，當工具呼叫需要確認時，用獨立的 API 呼叫（side query）判斷是否允許執行。
+
+**架構（兩階段 XML 分類器）**：
+
+```
+transcriptHistory + action → buildYoloSystemPrompt() → sideQuery（獨立 API 呼叫）
+    ↓
+Stage 1（fast）: max_tokens=256, stop_sequences
+    → shouldBlock? yes → done
+    → no → Stage 2（thinking）: 用 extended thinking 深入分析
+    → 最終 shouldBlock: boolean
+```
+
+- System prompt 從 `.txt` 文字檔載入（`auto_mode_system_prompt.txt` + `permissions_external.txt` / `permissions_anthropic.txt`）
+- 使用 `cache_control` 在 action block 上設定快取，stage 1/2 共享 prefix → stage 2 可命中 cache
+- 空輸入（`toCompact()` 回傳 `''`）直接允許，不呼叫 API
+
+**使用者可自訂分類器規則**（`settings.autoMode`）：
+
+```json
+{
+  "autoMode": {
+    "allow": ["npm test", "git push"],
+    "soft_deny": ["curl -X DELETE"],
+    "environment": ["This is a CI environment", "Only read-only operations are expected"]
+  }
+}
+```
+
+| 欄位 | 說明 |
+|------|------|
+| `allow` | 自動允許的命令描述（白名單） |
+| `soft_deny` | 偏向拒絕但可被 context 覆蓋（軟性黑名單） |
+| `environment` | 提供環境背景，影響分類器判斷 |
+
+查看預設規則：`claude auto-mode defaults`
+
+---
+
 ## Bash 工具的權限匹配邏輯
 
 來源：外流原始碼 2.1.88 `utils/permissions/shellRuleMatching.ts`（已交叉確認 binary 2.1.72 逆向結論）

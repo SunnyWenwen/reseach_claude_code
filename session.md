@@ -36,18 +36,134 @@ d--project-test-claude-skill/
 
 ---
 
-## JSONL 記錄類型
+## JSONL 寫入機制（`sessionStorage.ts`）
 
-每行一個 JSON 物件，`type` 欄位決定記錄種類：
+來源：外流原始碼 2.1.88 `utils/sessionStorage.ts`
+
+### Session 檔案的建立時機（Lazy Materialization）
+
+**JSONL 檔案不在 session 開始時立即建立**，而是在第一個 `user` 或 `assistant` 訊息出現時才建立（`materializeSessionFile()`）。
+
+```
+session 開始
+    ↓
+hook progress / attachment 訊息 → 暫存進 pendingEntries（buffer）
+    ↓
+第一個 user 或 assistant 訊息
+    → 建立 {session-id}.jsonl
+    → 寫入 pendingEntries（flush buffer）
+    → 後續訊息直接 append
+```
+
+這個設計**防止只有 metadata 的空 session 檔案**出現。
+
+### TranscriptMessage 額外欄位（寫入時自動附加）
+
+每條 transcript record（user/assistant/attachment/system）在寫入 JSONL 時，`insertMessageChain()` 會附加以下 session-stamp 欄位：
+
+| 欄位 | 說明 |
+|------|------|
+| `parentUuid` | 鏈中的前一條 transcript 訊息 UUID；compact_boundary 為 null |
+| `logicalParentUuid` | compact_boundary 時記錄邏輯父節點（供 --continue 使用） |
+| `isSidechain` | true 表示 subagent 的 sidechain 訊息 |
+| `agentId` | subagent ID（subagent 的記錄才有） |
+| `teamName` / `agentName` | 多 agent 情境 |
+| `promptId` | user 訊息才有，記錄該 prompt 的 ID |
+| `userType` | 使用者類型（e.g. `external`、`ant`） |
+| `entrypoint` | 進入方式（cli / web / vscode 等） |
+| `cwd` | 當下工作目錄 |
+| `sessionId` | session UUID |
+| `version` | Claude Code 版本號 |
+| `gitBranch` | 當下 git branch |
+| `slug` | session 的人類可讀名稱（如 `noble-wiggling-squid`） |
+
+### Progress 記錄：不進入 JSONL（PR #24099 後）
+
+**重要修正**（來源：sessionStorage.ts 原始碼注釋 lines 133–138）：
+
+> "Progress messages are NOT transcript messages. They are ephemeral UI state and must not be persisted to the JSONL or participate in the parentUuid chain. Including them caused chain forks that orphaned real conversation messages on resume (see #14373, #23537)."
+
+| 版本 | progress 記錄行為 |
+|------|------|
+| PR #24099 以前 | 寫入 JSONL，有 uuid + parentUuid |
+| PR #24099 以後 | **不寫入 JSONL**，純 UI 暫態（`LegacyProgressEntry` 是 type guard，用於讀取舊記錄） |
+
+現有 JSONL 中的 progress 記錄（如 `bash_progress`、`agent_progress`）是**舊 session 的遺留**，新 session 不再寫入。
+
+### 完整 JSONL Entry 類型清單
+
+來源：sessionStorage.ts `appendEntry()` switch（lines 1157–1264）
+
+#### Transcript 訊息（進入 parentUuid chain）
 
 | type | 說明 |
 |------|------|
-| `user` | 使用者訊息；含 `isMeta: true` 的 skill 注入；也含 tool_result（`toolUseResult` 欄位） |
-| `assistant` | Claude 回應；content 可含 `text`、`tool_use`、`thinking` |
-| `progress` | 背景進度事件，**不進入 LLM context**（見下方） |
-| `system` | 系統事件（見下方） |
-| `file-history-snapshot` | 檔案狀態快照（長 session 可出現多次） |
-| `compact_boundary` | Context compaction（自動或手動）發生時的邊界記錄；含 `preTokens` 欄位（壓縮前的 token 數）；來源：官方文件 `sub-agents` |
+| `user` | 使用者輸入；含 tool_result（`toolUseResult` 欄位） |
+| `assistant` | Claude 回應；含 text/tool_use/thinking |
+| `attachment` | 附件訊息（file 等） |
+| `system` | 系統訊息（session 初始化事件等） |
+
+#### Metadata 記錄（session 層級，不進 chain）
+
+| type | 說明 |
+|------|------|
+| `summary` | 壓縮摘要 |
+| `custom-title` | 使用者自訂 session 標題 |
+| `ai-title` | AI 自動生成標題 |
+| `last-prompt` | 最近一次使用者輸入（供 --resume picker 顯示） |
+| `task-summary` | 任務摘要 |
+| `tag` | Session 標籤 |
+| `agent-name` | agent 名稱 |
+| `agent-color` | agent 顏色 |
+| `agent-setting` | agent 設定 |
+| `pr-link` | PR 連結（Create PR 後寫入）|
+| `mode` | coordinator/normal 模式 |
+| `worktree-state` | worktree 狀態 |
+
+#### 其他記錄
+
+| type | 說明 |
+|------|------|
+| `file-history-snapshot` | 檔案狀態快照（checkpointing） |
+| `attribution-snapshot` | Attribution 快照 |
+| `content-replacement` | 大型 tool result 外部儲存的替換記錄 |
+| `marble-origami-commit` | Context collapse commit（新壓縮機制） |
+| `marble-origami-snapshot` | Context collapse snapshot |
+| `queue-operation` | 任務隊列操作 |
+| `speculation-accept` | 投機執行接受記錄 |
+| `compact_boundary` | Context compaction 邊界（`SystemCompactBoundaryMessage`，parentUuid=null） |
+
+### Token Usage 的儲存位置
+
+token usage **不是獨立記錄**，而是直接嵌在 `assistant` 記錄的 `message.usage` 欄位中，數值來自 Anthropic API 回傳：
+
+```json
+{
+  "type": "assistant",
+  "message": {
+    "usage": {
+      "input_tokens": 1,
+      "output_tokens": 116,
+      "cache_read_input_tokens": 5576,
+      "cache_creation_input_tokens": 604
+    }
+  }
+}
+```
+
+**注意**：compact 後，被保留的 assistant 訊息的 usage 會被歸零（`input_tokens: 0` 等），避免 resume 時誤判已壓縮的 context 大小導致立即再次觸發自動壓縮。
+
+### Subagent Sidechain 的儲存路徑
+
+subagent 訊息寫入獨立檔案，**不進主 session 的 JSONL**：
+
+```
+{session-id}/subagents/agent-{agentId}.jsonl
+```
+
+UUID dedup 跳過 sidechain 記錄：若 sidechain 訊息的 UUID 加入了主 session 的 messageSet，main thread 後續訊息的 parentUuid chain 會斷裂（dangling ref）。
+
+---
 
 ### 同一 message 可能拆成多條記錄
 

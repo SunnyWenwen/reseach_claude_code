@@ -22,15 +22,22 @@
 - **兩個層次**：工具權限（可設定）vs 判斷性確認（不可設定）
 - **permissions.allow 格式**：工具、prefix、domain、skill 等規則（tool-level vs param-level）
 - **IPC 確認流程**：permission_request/response 結構；確認過程不進 JSONL
-- **Bash 匹配邏輯**：prefix/exact/wildcard 三種規則類型；複合命令不匹配 prefix（防越獄設計）
+- **Bash 匹配邏輯**：prefix/exact/wildcard 三種規則類型；複合命令不匹配 prefix（防越獄設計）；rule content escaping
+- **DANGEROUS_BASH_PATTERNS**：直譯器/shell/套件執行器黑名單；ANT-ONLY 追加項（gh/curl/kubectl 等）
+- **權限決策完整流程**：`hasPermissionsToUseToolInner()` 9 步驟（deny→ask→checkPermissions→bypass-immune→bypassPermissions→allow rule）
+- **Auto Mode 分類器**：TRANSCRIPT_CLASSIFIER（yoloClassifier）兩階段 XML 分類；bashClassifier 為 ANT-ONLY stub；用戶可透過 `settings.autoMode` 自訂規則
 - **Permission Modes**：acceptEdits/bypassPermissions/dontAsk/plan/default/auto 六種模式；與 allow 規則的差異
-- **官方安全機制**：寫入範圍限制、命令黑名單、injection 偵測、fail-closed
+- **規則來源與 Legacy 別名**：8 種 PermissionRuleSource；Task→Agent 等歷史別名自動正規化
 
 ## [session.md](session.md) — Session 記錄
 
 - **儲存位置與目錄結構**：subagents/、tool-results/ 何時產生
-- **JSONL 記錄類型**：user、assistant、progress、system、file-history-snapshot、compact_boundary
-- **progress 子類型**：hook_progress、bash_progress、agent_progress
+- **Lazy Materialization**：JSONL 在第一個 user/assistant 訊息才建立；beforehand 進 pendingEntries buffer
+- **JSONL 完整 Entry 類型**：transcript（user/assistant/attachment/system）+ metadata（summary/custom-title/pr-link 等）+ 其他（file-history-snapshot/content-replacement/marble-origami-*/queue-operation）
+- **Progress 記錄已廢棄**（PR #24099 後不再寫入 JSONL）；舊 JSONL 中的 progress 是遺留記錄
+- **TranscriptMessage 額外欄位**：sessionId/version/gitBranch/cwd/userType/entrypoint/slug 等 session-stamp
+- **Token Usage**：嵌在 assistant 的 `message.usage`；compact 後被保留訊息的 usage 歸零防止再觸發壓縮
+- **Subagent Sidechain**：寫入 {sessionId}/subagents/agent-{id}.jsonl，UUID dedup 跳過 sidechain 防 chain 斷裂
 - **toolUseResult 格式**：正常（dict）vs 錯誤（string）
 - **大型 tool result**：超過閾值時外部儲存機制
 - **Checkpointing**：file editing tool 執行前自動快照；Bash 修改不追蹤；Rewind 五種操作；Summarize vs /compact 差異
@@ -45,6 +52,12 @@
 - **System Prompt 原文**：`dj()` 組裝函式；各靜態/動態 section 函式完整原文（Ws6/js6/Es6/Ts6/Xs6/Js6/Vs6/ws6/zs6/Ep1）
 - **工具 Description 原文**：LLM 實際看到的各工具 description 文字
 - **工具 Input Schema**：各工具 tool call 所需參數（Pre-loaded 9 個 + Deferred 7 個）；來源 binary Zod schema
+
+## [source-analysis/undercover.md](source-analysis/undercover.md) — Undercover 模式
+
+- **ANT-ONLY 功能**：外部 build 全部 dead-code-eliminated，外部用戶不受影響
+- **啟用條件**：`CLAUDE_CODE_UNDERCOVER=1` 強制開；repo 非內部白名單則自動開；無強制 OFF
+- **注入指令原文**：禁止 commit/PR 包含模型代號（Capybara/Tengu）、未發布版本號、內部 repo 名、Co-Authored-By 等
 
 ## [ui.md](ui.md) — Claude Code Web UI 行為
 

@@ -668,27 +668,33 @@ Explore(List files in project)
 
 Claude Code 支援在特定事件觸發時自動執行 shell 命令或 LLM prompt。
 
-### 支援的事件（來源：binary `2.1.72`）
+### 支援的事件（來源：外流原始碼 2.1.88 `utils/hooks.ts` 確認）
 
-| 事件 | 說明 |
-|------|------|
-| `PreToolUse` | 工具呼叫前 |
-| `PostToolUse` | 工具呼叫成功後 |
-| `PostToolUseFailure` | 工具呼叫失敗後 |
-| `UserPromptSubmit` | 使用者送出訊息時 |
-| `Notification` | 收到通知時 |
-| `SessionStart` / `SessionEnd` | session 開始/結束 |
-| `Stop` | Claude 停止回應時 |
-| `SubagentStart` / `SubagentStop` | subagent 啟動/停止 |
-| `PreCompact` | context 壓縮前 |
-| `PermissionRequest` | 權限確認請求時 |
-| `Setup` | 初始化時 |
-| `TeammateIdle` | teammate 閒置時 |
-| `TaskCompleted` | 任務完成時 |
-| `Elicitation` / `ElicitationResult` | 資訊蒐集事件 |
-| `ConfigChange` | 設定變更時 |
-| `WorktreeCreate` / `WorktreeRemove` | worktree 建立/移除 |
-| `InstructionsLoaded` | 指令載入時 |
+| 事件 | 觸發時機 | Matcher 依據 |
+|------|---------|------------|
+| `PreToolUse` | 工具呼叫前 | `tool_name` |
+| `PostToolUse` | 工具呼叫成功後 | `tool_name` |
+| `PostToolUseFailure` | 工具呼叫失敗後 | `tool_name` |
+| `PermissionDenied` | 權限被拒絕後 | `tool_name` |
+| `PermissionRequest` | 權限確認請求（headless agent）| `tool_name` |
+| `UserPromptSubmit` | 使用者送出訊息時 | — |
+| `Notification` | 收到通知時 | — |
+| `SessionStart` | session 開始時（startup/resume/clear/compact）| `source` |
+| `SessionEnd` | session 結束時 | `reason` |
+| `Stop` | Claude 停止回應時 | — |
+| `SubagentStart` | subagent 啟動時 | `agent_type` |
+| `SubagentStop` | subagent 停止時 | — |
+| `StopFailure` | Stop 失敗時 | — |
+| `Setup` | 初始化時 | `trigger` |
+| `TeammateIdle` | teammate 閒置時 | — |
+| `TaskCreated` | 任務建立時 | — |
+| `TaskCompleted` | 任務完成時 | — |
+| `Elicitation` | 資訊蒐集事件 | — |
+| `CwdChanged` | 工作目錄變更時 | — |
+| `FileChanged` | 檔案變更時 | — |
+| `WorktreeCreate` | worktree 建立時 | — |
+| `PreCompact` / `PostCompact` | context 壓縮前/後 | — |
+| `ConfigChange` | 設定變更時 | — |
 
 ### Hook 類型（來源：binary schema + 官方文件）
 
@@ -741,15 +747,15 @@ Claude Code 支援在特定事件觸發時自動執行 shell 命令或 LLM promp
 
 ### Hook 的 JSON 輸出控制
 
-來源：官方文件 `hooks`、`hooks-guide`
+來源：外流原始碼 2.1.88 `utils/hooks.ts` `processHookJSONOutput()`（lines 489–688）
 
 **Exit code 語意**（僅 `command` 類型）：
 
-| exit code | 行為 |
-|-----------|------|
-| `0` | 允許，解析 stdout JSON |
-| `2` | **阻斷**，stderr 回傳給 Claude 或顯示給使用者 |
-| 其他 | 非阻斷錯誤（verbose 模式才顯示） |
+| exit code | 行為 | 來源 |
+|-----------|------|------|
+| `0` | 允許，解析 stdout JSON | — |
+| `2` | **阻斷**（`outcome: 'blocking'`），stderr 作為 blockingError 內容 | line 2648 |
+| 其他非零 | 非阻斷錯誤（`outcome: 'non_blocking_error'`），顯示給使用者 | line 2682 |
 
 注意：exit 2 時 stdout JSON 被忽略；不可混用 exit 2 與 JSON。`http` 類型非 2xx = 非阻斷，只能靠 2xx + JSON body 阻斷。
 
@@ -757,21 +763,32 @@ Claude Code 支援在特定事件觸發時自動執行 shell 命令或 LLM promp
 
 | 欄位 | 說明 |
 |------|------|
-| `continue: false` | 立即停止 Claude，不再繼續 |
+| `continue: false` | `preventContinuation = true`，立即停止 |
 | `stopReason` | 停止的原因說明 |
 | `suppressOutput` | 隱藏此 hook 的輸出 |
-| `systemMessage` | 注入 Claude 的 context（下一個 turn 才送出，async hook 也有效） |
-| `additionalContext` | 同上，補充 context |
-| `decision: "block"` + `reason` | 阻斷操作（`PostToolUse`/`Stop`/`UserPromptSubmit` 用） |
+| `systemMessage` | 注入 Claude 的 context |
+| `decision: "approve"` | `permissionBehavior = 'allow'` |
+| `decision: "block"` + `reason` | `permissionBehavior = 'deny'`，`blockingError` = reason |
 
-**事件專屬控制欄位**：
+**事件專屬欄位（`hookSpecificOutput`）**：
 
 | 事件 | 欄位 | 說明 |
 |------|------|------|
-| `PreToolUse` | `hookSpecificOutput.permissionDecision` | `allow`/`deny`/`ask` |
-| `PreToolUse` | `hookSpecificOutput.updatedInput` | 修改工具的輸入參數再執行 |
-| `PermissionRequest` | `hookSpecificOutput.decision.behavior` | 同上，針對權限請求 |
-| `WorktreeCreate` | stdout 純文字 | 指定 worktree 建立路徑 |
+| `PreToolUse` | `permissionDecision: 'allow'\|'deny'\|'ask'` | 覆蓋 decision 的更細粒度控制 |
+| `PreToolUse` | `permissionDecisionReason` | 理由字串 |
+| `PreToolUse` | `updatedInput` | 修改工具的輸入參數再執行 |
+| `PreToolUse` | `additionalContext` | 補充 context |
+| `PostToolUse` | `additionalContext` | 補充 context |
+| `PostToolUse` | `updatedMCPToolOutput` | 覆蓋 MCP tool 的輸出 |
+| `UserPromptSubmit` | `additionalContext` | 補充 context |
+| `SessionStart` | `additionalContext` | 補充 context |
+| `SessionStart` | `initialUserMessage` | 注入初始使用者訊息 |
+| `SessionStart` | `watchPaths` | 要監聽的路徑列表 |
+| `PermissionRequest` | `decision.behavior: 'allow'\|'deny'` | headless agent 的權限決定 |
+| `PermissionRequest` | `decision.updatedInput` | 允許並修改輸入 |
+| `PermissionDenied` | `retry` | 是否重試 |
+| `Elicitation` | `action: 'accept'\|'decline'` | 資訊蒐集結果 |
+| `WorktreeCreate` | `worktreePath` | 指定 worktree 建立路徑 |
 
 ### Stop hook 無限迴圈防護
 
