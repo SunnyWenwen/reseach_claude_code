@@ -32,6 +32,9 @@
 
 ## [session.md](session.md) — Session 記錄
 
+- **Session 啟動 Hook 流程**：processSessionStartHooks() 觸發時機（startup/resume/clear/compact）；bare/allowManagedHooksOnly 跳過邏輯；pendingInitialUserMessage side channel；processSetupHooks()
+- **Session 狀態機**：SessionState（idle/running/requires_action）；RequiresActionDetails 結構；SessionExternalMetadata（permission_mode/pending_action/task_summary 等）；notifyPermissionModeChanged 單點通知；CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS
+- **用戶輸入歷史**：history.ts = shell-like 輸入歷史（非 conversation）；~/.claude/history.jsonl；LogEntry 結構；貼上內容 inline vs hash 儲存；getHistory/getTimestampedHistory 差異；removeLastFromHistory 撤銷機制；CLAUDE_CODE_SKIP_PROMPT_HISTORY
 - **儲存位置與目錄結構**：subagents/、tool-results/ 何時產生
 - **Lazy Materialization**：JSONL 在第一個 user/assistant 訊息才建立；beforehand 進 pendingEntries buffer
 - **JSONL 完整 Entry 類型**：transcript（user/assistant/attachment/system）+ metadata（summary/custom-title/pr-link 等）+ 其他（file-history-snapshot/content-replacement/marble-origami-*/queue-operation）

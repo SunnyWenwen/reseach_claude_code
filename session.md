@@ -267,3 +267,112 @@ assistant 記錄的 `usage` 欄位：
 ### 定位
 
 Checkpoint 是「session 層級的快速復原」，不取代 Git（Git 作為永久版本歷史）。若要在保留原 session 的情況下嘗試不同方向，應使用 **fork**（`claude --continue --fork-session`）而非 Summarize。
+
+---
+
+## Session 啟動機制（T11）
+
+來源：外流原始碼 2.1.88 `utils/sessionStart.ts`（232 行）、`utils/sessionState.ts`（150 行）
+
+### Session 啟動 Hook 流程（sessionStart.ts）
+
+`processSessionStartHooks(source, options)` 在以下時機觸發：
+
+| `source` | 觸發時機 |
+|---------|---------|
+| `'startup'` | 首次啟動 |
+| `'resume'` | `/resume` 恢復 session |
+| `'clear'` | `/clear` 清除對話 |
+| `'compact'` | `/compact` 後 |
+
+執行流程：
+1. `--bare` 模式：直接跳過所有 hook，返回空陣列
+2. `shouldAllowManagedHooksOnly()` 為 true：跳過 plugin hooks（只執行 managed hooks）
+3. `loadPluginHooks()`：確保 plugin hooks 已載入（memoized，重複呼叫無額外開銷）
+4. `executeSessionStartHooks()`：執行 SessionStart hooks，收集 `hookMessages`, `additionalContexts`, `watchPaths`, `pendingInitialUserMessage`
+5. 更新 file watchers（`updateWatchPaths()`）
+6. 若有 `additionalContexts`：建立 `hook_additional_context` attachment message
+
+**side channel `pendingInitialUserMessage`**：SessionStart hook 可回傳 `initialUserMessage`，透過 module-level 變數傳遞（避免修改函式返回類型）；由 `takeInitialUserMessage()` 消費一次。
+
+### Session 狀態機（sessionState.ts）
+
+```ts
+type SessionState = 'idle' | 'running' | 'requires_action'
+```
+
+| 狀態 | 說明 |
+|------|------|
+| `'idle'` | 無進行中任務 |
+| `'running'` | 模型推理或工具執行中 |
+| `'requires_action'` | 等待使用者確認（如權限請求） |
+
+**`RequiresActionDetails`**（`requires_action` 時攜帶）：
+```ts
+{
+  tool_name: string
+  action_description: string  // e.g. "Editing src/foo.ts"
+  tool_use_id: string
+  request_id: string
+  input?: Record<string, unknown>  // frontend 可從此讀取問題選項/plan 內容
+}
+```
+
+**`SessionExternalMetadata`**（同步到外部 session metadata）：
+```ts
+{
+  permission_mode?: string | null
+  is_ultraplan_mode?: boolean | null
+  model?: string | null
+  pending_action?: RequiresActionDetails | null
+  post_turn_summary?: unknown
+  task_summary?: string | null  // 長 turn 的中途進度摘要
+}
+```
+
+**狀態轉換觸發**：
+- `notifySessionStateChanged(state, details?)`: 更新狀態 + 通知 listener + 同步 `pending_action` 至 external_metadata（RFC 7396 null on exit）+ idle 時清除 `task_summary`
+- `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS` env var：啟用後向 SDK event stream 發射 `system:session_state_changed` 事件（供 scmuxd/VS Code 等非 CCR 消費者）
+- `notifyPermissionModeChanged(mode)`: Permission mode 變更的唯一通道；CCR external_metadata PUT + SDK status stream 都透過此單點
+
+---
+
+## 用戶輸入歷史（T13）
+
+來源：外流原始碼 2.1.88 `history.ts`（464 行）
+
+**注意**：`history.ts` 管理的是 **用戶輸入 prompt 的 shell-like 歷史**（up-arrow recall、ctrl+r search），**不是** conversation JSONL（那是 `sessionStorage.ts`）。
+
+### 儲存位置
+
+`~/.claude/history.jsonl`（跨所有 project 共用的全局文件）
+
+### 資料結構
+
+`LogEntry`：
+```ts
+{
+  display: string                              // 顯示文字
+  pastedContents: Record<number, StoredPastedContent>  // 貼上內容
+  timestamp: number                            // Unix timestamp（用於 skip-set dedup）
+  project: string                              // project root 路徑
+  sessionId?: string                           // session ID
+}
+```
+
+`StoredPastedContent`：
+- 小內容（≤ 1024 chars）：`content` 欄位 inline 儲存
+- 大內容（> 1024 chars）：計算 hash，`contentHash` 欄位參照 paste store（非同步 fire-and-forget 寫入）
+- 圖片：**不儲存**（addToPromptHistory 時跳過）
+
+### 歷史讀取
+
+- `getHistory()`: up-arrow recall；**當前 session 優先，再其他 session**（並發 session 不交錯），最多 100 筆
+- `getTimestampedHistory()`: ctrl+r picker；按 display 去重，最多 100 筆，lazy resolve paste content
+- `makeHistoryReader()`: 底層 async generator，先 pending buffer 再讀磁碟（reverse order）
+
+### 特殊行為
+
+- `removeLastFromHistory()`: Esc interrupt 復原時撤銷最後一筆；fast path pop pending buffer，若已 flush 則加入 `skippedTimestamps` set
+- `CLAUDE_CODE_SKIP_PROMPT_HISTORY` env var：跳過歷史記錄（Tungsten tool 開啟的 tmux 子 session 使用）
+- `registerCleanup()`：確保 pending entries 在程序結束前 flush 到磁碟
