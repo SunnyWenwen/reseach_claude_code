@@ -46,6 +46,7 @@
 
 - **Extended Thinking**：thinking 明文 vs 加密兩種狀態、設定方式
 - **System Prompt 結構**：`dj()` 組裝函式；靜態 section 固定順序（Ws6/js6/Es6/Ts6/Xs6/Js6/Vs6）；動態 section（memory/env/language/output_style/mcp）；Output Style 對 system prompt 的影響；feature flags（tengu_sotto_voce 等）；CLAUDE_CODE_SIMPLE 極簡模式
+- **Query 處理流程**：`query()` vs `queryLoop()` vs `QueryEngine` 三層分工；per-iteration 7 段 pipeline（applyToolResultBudget→snip→microcompact→contextCollapse→autocompact→callModel）；Streaming fallback/Model fallback 機制；Extended Thinking 三大規則；`SYSTEM_PROMPT_DYNAMIC_BOUNDARY` cache 分界；loop 終止 reason 清單
 
 ## [prompt-schema.md](prompt-schema.md) — Prompt 與 Schema 原文
 
