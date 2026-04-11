@@ -473,15 +473,53 @@ tools: [
 - **同一 session**：`tool_reference` 已在 message history → 下一輪 API 呼叫時 server 知道已發現，可直接使用
 - **跨 session**：history 清空，需重新 ToolSearch
 
-### ToolSearch 的停用條件
+### ToolSearchMode 三種模式（來源：`utils/toolSearch.ts:161`）
 
-| 條件 | 行為 |
+```ts
+type ToolSearchMode = 'tst' | 'tst-auto' | 'standard'
+```
+
+| mode | 說明 |
 |------|------|
-| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=true` | 強制 standard 模式（不 defer） |
-| `ENABLE_TOOL_SEARCH=false` | standard 模式 |
-| Haiku 模型 | 不支援 `tool_reference`，強制 standard |
-| `ENABLE_TOOL_SEARCH=auto:N` | 工具 token 超過 context N% 才啟用 |
-| 預設（unset） | `tst` 模式：MCP 與 shouldDefer 工具一律 defer |
+| `'tst'` | 永遠 defer MCP 與 shouldDefer 工具（always on） |
+| `'tst-auto'` | 只有工具 token 超過閾值才 defer（auto threshold） |
+| `'standard'` | 全部 inline，不 defer，等同停用 ToolSearch |
+
+**`ENABLE_TOOL_SEARCH` env var 對應邏輯**（`getToolSearchMode()`）：
+
+| 值 | 模式 |
+|----|------|
+| 未設定（預設） | `tst`（永遠 defer） |
+| `true` | `tst` |
+| `false` | `standard` |
+| `auto` | `tst-auto`（預設 10% 閾值） |
+| `auto:N`（N=0） | `tst`（0% = 永遠啟用） |
+| `auto:N`（N=1-99） | `tst-auto`（N% 閾值） |
+| `auto:N`（N=100） | `standard`（100% = 永遠停用） |
+
+**Auto-threshold 計算**：預設 context window 的 **10%**；可透過 GrowthBook 覆蓋（無需改 code）。Token 計算先呼叫 token counting API，失敗時退回 **chars ÷ 2.5** 估算。
+
+### ToolSearch 停用條件（優先序由高到低）
+
+| 條件 | 行為 | 來源 |
+|------|------|------|
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=true` | 強制 `standard`，不論其他設定 | `toolSearch.ts:181` |
+| `ENABLE_TOOL_SEARCH=false` / `auto:100` | `standard` | `toolSearch.ts:196` |
+| 非 first-party `ANTHROPIC_BASE_URL` 且未明確設定 `ENABLE_TOOL_SEARCH` | 停用（見下方）| `toolSearch.ts:299-311` |
+| Haiku 模型（或 GrowthBook `tengu_tool_search_unsupported_models` 清單） | 不支援 `tool_reference` | `toolSearch.ts:204` |
+
+**第三方 proxy 的特別邏輯**（重要）：
+
+`tool_reference` 是 Anthropic beta 功能，許多第三方 API proxy（`ANTHROPIC_BASE_URL` 指向非官方端點）不支援，會回傳 400。因此，若：
+- `ENABLE_TOOL_SEARCH` **未明確設定**（空字串或未設）
+- 且 API provider 是 `'firstParty'`（即不是 Bedrock/Vertex）
+- 但 `ANTHROPIC_BASE_URL` 不是 first-party Anthropic 主機
+
+則 `isToolSearchEnabledOptimistic()` 返回 `false`，停用 ToolSearch。
+
+**若你的 proxy 支援 tool_reference**（如 LiteLLM passthrough、Cloudflare AI Gateway）：設定 `ENABLE_TOOL_SEARCH=true` 或 `auto` 即可重新啟用，明確設定代表用戶聲明 proxy 支援。
+
+**Haiku 不支援的機制**：透過 `getFeatureValue_CACHED_MAY_BE_STALE('tengu_tool_search_unsupported_models', null)` 從 GrowthBook 取得清單，預設為 `['haiku']`，可線上更新不需改 code。
 
 ---
 
@@ -834,6 +872,18 @@ Matcher 是 regex 字串，決定哪些 hook 在此事件觸發：
 **Hook 快照**：Claude Code 在 session 啟動時抓取 hooks 快照。session 進行中對 settings 檔的修改不立即生效，需在 `/hooks` 選單審閱後才套用（防止惡意修改 hook）。
 
 來源：官方文件 `hooks`、`hooks-guide`
+
+### Hook Timeout 數值（來源：`utils/hooks.ts:166-181`）
+
+| Hook 類型 | 預設 Timeout | 說明 |
+|----------|-------------|------|
+| 工具相關（PreToolUse/PostToolUse/Stop 等） | **10 分鐘**（600,000 ms） | 個別 hook 可用 `timeout` 欄位（秒數）覆蓋 |
+| Session end（SessionEnd）| **1.5 秒**（1,500 ms） | 刻意非常短；可用 `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` env var 覆蓋 |
+
+**注意**：SessionEnd timeout 極短（1.5 秒），如果 Stop hook 裡做複雜操作（如 commit + push）很可能 timeout。若需較長時間，設定：
+```bash
+export CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=30000  # 30 秒
+```
 
 ### Hook 在 JSONL 中的記錄
 

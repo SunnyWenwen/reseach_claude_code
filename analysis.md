@@ -9,7 +9,7 @@
 - **Agentic Loop**：工具執行架構（批次 tool call、例外情況）
 - **工具分類**：Pre-loaded / Deferred / MCP；依功能：唯讀/寫入/執行/meta 等
 - **為何有 Read/Write**：與 Bash 的本質差異（權限粒度、token 限制、diff、寫入限制）
-- **ToolSearch**：載入 deferred 工具的機制與效率影響
+- **ToolSearch**：ToolSearchMode 三種模式（tst/tst-auto/standard）；ENABLE_TOOL_SEARCH env var 全部對應值；auto-threshold 預設 10% context window；第三方 proxy 自動停用邏輯（非 first-party URL + 未明確設定 → 停用）；GrowthBook `tengu_tool_search_unsupported_models` 動態更新 Haiku 例外清單
 - **工具與 LLM 關係**：哪些工具內部使用 LLM（Agent/Skill/prompt hook）
 - **MCP Server 初始化**：早期非阻塞 Promise 啟動；regular vs SDK 配置分離；prefetchAllMcpResources；isNonInteractiveSession 跳過；tools/commands uniqBy 去重
 - **Tool 定義與載入**：`Tool<>` 介面完整欄位（shouldDefer/alwaysLoad/searchHint/maxResultSizeChars）；buildTool() 工廠 fail-closed 預設；ToolResult 結構；getAllBaseTools() 完整工具清單（含 ANT-ONLY 與 feature-gated）；Subagent 工具限制清單（ALL_AGENT_DISALLOWED/ASYNC_AGENT/IN_PROCESS_TEAMMATE/COORDINATOR）；ToolUseContext 完整欄位
@@ -19,7 +19,7 @@
 - **Output Styles**：直接替換 system prompt（非附加）；三種內建樣式；自訂樣式 frontmatter；下次新 session 才生效
 - **Skill allowed-tools vs Agent 工具權限**：差異與設計原因
 - **Agent 工具**：subagent_type 選項、特性、IPC 通訊協議、memory 目錄
-- **Hooks**：事件清單（21 種）、command/http/prompt/agent 四種類型及其 schema；JSON 輸出控制欄位；Stop hook 無限迴圈防護（`stop_hook_active`）；ConfigChange 審計；Matcher 機制；快照機制
+- **Hooks**：事件清單（21 種）、command/http/prompt/agent 四種類型及其 schema；JSON 輸出控制欄位；Stop hook 無限迴圈防護（`stop_hook_active`）；ConfigChange 審計；Matcher 機制；快照機制；**Timeout 數值：工具 hook 10 分鐘 / SessionEnd 1.5 秒**（CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS 可覆蓋）
 
 ## [permissions.md](permissions.md) — 權限系統
 

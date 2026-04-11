@@ -55,6 +55,48 @@ Beta flags：
 
 ---
 
+## System Prompt 組合優先序
+
+來源：外流原始碼 2.1.88 `utils/systemPrompt.ts`（`buildEffectiveSystemPrompt()`）
+
+### 優先序（由高到低）
+
+```
+0. overrideSystemPrompt（若設定，取代一切，appendSystemPrompt 也不加）
+1. coordinator prompt（COORDINATOR_MODE + CLAUDE_CODE_COORDINATOR_MODE env）
+2. agent system prompt
+   - PROACTIVE/KAIROS 模式：附加在 default prompt 後面（不取代）
+   - 其他：完全取代 default prompt
+3. customSystemPrompt（--system-prompt CLI 參數）
+4. defaultSystemPrompt（標準 Claude Code prompt）
++ appendSystemPrompt（永遠附加在最後，override 模式除外）
+```
+
+**注意**：`overrideSystemPrompt`（用於 loop mode 等）設定後，**連 `appendSystemPrompt` 也不會加入**。
+
+**PROACTIVE/KAIROS 的特殊行為**：agent prompt 以 `\n# Custom Agent Instructions\n` 分隔附加在 default prompt 後，讓 agent 既有完整 Claude Code 能力又有 domain-specific 指令。
+
+### systemPromptSection 快取機制
+
+來源：外流原始碼 2.1.88 `constants/systemPromptSections.ts`
+
+System prompt 的各 section 透過兩種建構函式定義：
+
+| 函式 | `cacheBreak` | 行為 |
+|------|-------------|------|
+| `systemPromptSection(name, compute)` | `false` | **快取**：session 內計算一次，之後讀快取 |
+| `DANGEROUS_uncachedSystemPromptSection(name, compute, reason)` | `true` | **每次重新計算**；名稱加 `DANGEROUS_` 提醒 reviewer 有 cache bust 代價 |
+
+所有 sections 在 `resolveSystemPromptSections()` 中**並行**解析（`Promise.all`）。
+
+**快取清除時機**（`clearSystemPromptSections()`）：
+- `/clear` 命令
+- `/compact` 命令
+
+清除時同時清除 **beta header latches**，讓下次對話重新評估 AFK/fast-mode/cache-editing beta headers。
+
+---
+
 ## Feature Flags 與 Main 入口（T12）
 
 來源：外流原始碼 2.1.88 `main.tsx`（4,690 行）

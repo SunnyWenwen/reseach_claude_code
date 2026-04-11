@@ -205,6 +205,13 @@ Bash(git *)  ← 匹配 "git"、"git add"、"git commit -m 'msg'"
 Bash(npm * install)  ← 不做 optional 處理（多個萬用字元）
 ```
 
+**Wildcard 轉 regex 的實作細節**（`shellRuleMatching.ts`）：
+- 用 null-byte sentinel 避免 escape 衝突：`\*` → `\x00ESCAPED_STAR\x00`，`\\` → `\x00ESCAPED_BACKSLASH\x00`
+- 接著 escape 所有 regex 特殊字元（除了 `*`）
+- `*` → `.*`
+- 再把 sentinel 替換回 `\*` / `\\`
+- 最後用 dotAll flag（`s`）讓 `.` 可跨行，支援含 newline 的 heredoc 命令
+
 ### 複合命令永遠不匹配 prefix 規則（安全設計）
 
 來源：binary 2.1.72 逆向確認（minified `iCA()`）
