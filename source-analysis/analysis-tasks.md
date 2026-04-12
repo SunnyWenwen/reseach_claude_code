@@ -126,19 +126,59 @@
 
 ---
 
+## 優先級 4：補充分析（原始碼覆蓋缺口）
+
+### T13 — 對話歷史管理
+- **檔案**：`history.ts`（464 行）
+- **目標**：
+  - 對話歷史的資料結構
+  - 訊息如何被截斷或壓縮（與 compact 機制的關係）
+  - context window 管理邏輯
+- **更新至**：`session.md`
+
+### T14 — Context 結構
+- **檔案**：`context.ts`（189 行）
+- **目標**：
+  - `ToolUseContext` 的完整欄位
+  - `getAppState()` / `setAppState()` 的用途
+  - Context 在 subagent 和 main thread 之間如何傳遞
+- **更新至**：`tools.md`（Tool 系統章節）
+
+### T15 — Task 類型定義
+- **檔案**：`Task.ts`（125 行）、`tasks.ts`（39 行）
+- **目標**：
+  - Task 與 Agent 的關係（是否同義？）
+  - Task 的狀態機
+  - 與 AgentTool 的銜接方式
+- **更新至**：`tools.md`（Agent 工具章節）
+
+### T16 — Permission Mode 定義
+- **檔案**：`utils/permissions/PermissionMode.ts`（141 行）
+- **目標**：
+  - 完整的 permission mode 類型定義
+  - mode 之間的轉換規則
+  - `isBypassPermissionsModeAvailable` 等 flag 的判斷邏輯
+- **更新至**：`permissions.md`
+
+---
+
 ## 分析記錄
 
 | 任務 | 狀態 | 分析者 | 完成日期 | 輸出文件 |
 |------|------|--------|---------|---------|
-| T01 | ⬜ 待分析 | — | — | — |
-| T02 | ⬜ 待分析 | — | — | — |
-| T03 | ⬜ 待分析 | — | — | — |
-| T04 | ⬜ 待分析 | — | — | — |
-| T05 | ⬜ 待分析 | — | — | — |
-| T06 | ⬜ 待分析 | — | — | — |
-| T07 | ⬜ 待分析 | — | — | — |
-| T08 | ⬜ 待分析 | — | — | — |
-| T09 | ⬜ 待分析 | — | — | — |
-| T10 | ⬜ 待分析 | — | — | — |
-| T11 | ⬜ 待分析 | — | — | — |
-| T12 | ⬜ 待分析 | — | — | — |
+| T01 | ✅ 完成 | Claude | 2026-04-05 | `tools.md` |
+| T02 | ✅ 完成 | Claude | 2026-04-05 | `prompt-schema.md` |
+| T03 | ✅ 完成 | Claude | 2026-04-05 | `tools.md` |
+| T04 | ✅ 完成 | Claude | 2026-04-05 | `permissions.md` |
+| T05 | ✅ 完成 | Claude | 2026-04-06 | `session.md` |
+| T06 | ✅ 完成 | Claude | 2026-04-06 | `tools.md` |
+| T07 | ✅ 完成 | Claude | 2026-04-06 | `permissions.md` |
+| T08 | ✅ 完成 | Claude | 2026-04-06 | `source-analysis/undercover.md` |
+| T09 | ✅ 完成 | Claude | 2026-04-06 | `model.md` |
+| T10 | ✅ 完成 | Claude | 2026-04-06 | `tools.md` |
+| T11 | ✅ 完成 | Claude | 2026-04-06 | `session.md` |
+| T12 | ✅ 完成 | Claude | 2026-04-06 | `model.md`、`tools.md` |
+| T13 | ✅ 完成 | Claude | 2026-04-06 | `session.md` |
+| T14 | ✅ 完成 | Claude | 2026-04-06 | `tools.md` |
+| T15 | ✅ 完成 | Claude | 2026-04-06 | `tools.md` |
+| T16 | ✅ 完成 | Claude | 2026-04-06 | `permissions.md` |

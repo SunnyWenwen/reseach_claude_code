@@ -94,6 +94,67 @@ flowchart TD
     B -- 否 --> E[回傳給使用者，停止]
 ```
 
+#### 原始碼驗證（來源：外流原始碼 2.1.88 `query.ts`）
+
+Loop 的實際結構是 **`while (true)`**（`query.ts:307`），**非遞迴**。終止信號是 `needsFollowUp` flag：
+
+```typescript
+// query.ts:554-558
+// Note: stop_reason === 'tool_use' is unreliable — it's not always set correctly.
+// Set during streaming whenever a tool_use block arrives — the sole loop-exit signal.
+const toolUseBlocks: ToolUseBlock[] = []
+let needsFollowUp = false
+```
+
+```typescript
+// query.ts:831-834
+if (msgToolUseBlocks.length > 0) {
+  toolUseBlocks.push(...msgToolUseBlocks)
+  needsFollowUp = true   // ← 有 tool_use → 繼續
+}
+
+// query.ts:1062
+if (!needsFollowUp) {
+  // ... stop hook 處理
+  return { reason: 'completed' }  // ← 正常終止
+}
+```
+
+**重要**：`stop_reason === 'tool_use'` **不可靠**（原始碼明確注解）。實際判斷依據是 streaming 過程中是否收到 tool_use block。
+
+#### Loop 的終止原因列表（`reason` 欄位）
+
+| reason | 說明 |
+|--------|------|
+| `completed` | 正常完成（無 tool_use，stop hook 通過）|
+| `max_turns` | 達到 `maxTurns` 上限（`query.ts:1705`）|
+| `aborted_streaming` | 使用者 Ctrl+C（streaming 途中中斷）|
+| `aborted_tools` | 使用者 Ctrl+C（工具執行途中中斷）|
+| `hook_stopped` | Stop hook 阻止繼續 |
+| `stop_hook_prevented` | Stop hook 回傳 prevent_continuation |
+| `blocking_limit` | Context 達硬性 token 上限 |
+| `model_error` | API 呼叫錯誤 |
+| `prompt_too_long` | Prompt 超長（無法自動 compact 時）|
+
+#### Tools 的 refresh 機制（與 ToolSearch 相關）
+
+每次 loop iteration 結束、準備下一輪前，有一個 `refreshTools()` 呼叫：
+
+```typescript
+// query.ts:1660-1670
+if (updatedToolUseContext.options.refreshTools) {
+  const refreshedTools = updatedToolUseContext.options.refreshTools()
+  if (refreshedTools !== updatedToolUseContext.options.tools) {
+    updatedToolUseContext = {
+      ...updatedToolUseContext,
+      options: { ...updatedToolUseContext.options, tools: refreshedTools },
+    }
+  }
+}
+```
+
+這是 ToolSearch 讓新工具在下一輪可用的機制入口（待 T03 確認細節）。
+
 ### 例外情況
 
 | 情況 | 說明 |
@@ -103,7 +164,7 @@ flowchart TD
 | **背景 Bash（`run_in_background`）** | 不阻塞，inference 繼續；結果以 `<task-notification>` 非同步通知 |
 | **Subagent** | 有自己獨立的 agentic loop，不佔主 agent 的推理次數 |
 
-來源：`6370316b...jsonl`，各 TOOL_CALL 之間的時間間隔（2~3 秒）可觀察到 LLM 推理。
+來源：`6370316b...jsonl`（行為觀察）；外流原始碼 2.1.88 `query.ts` `while(true)` loop（原始碼驗證）。
 
 ---
 
@@ -355,34 +416,110 @@ Skill 在主 session 執行，主 Claude 有全部工具。若不限制，skill 
 
 ## ToolSearch
 
-**元工具（工具的工具）**，唯一預設就存在的 deferred 工具載入器。
+**元工具（工具的工具）**，用於動態發現 deferred 工具。
 
 ### 查詢模式
 
 | 模式 | 範例 | 說明 |
 |------|------|------|
-| 直接選取 | `select:Glob` | 知道工具名稱時直接載入 |
-| 多工具選取 | `select:Read,Edit,Grep` | 一次載入多個 |
+| 直接選取 | `select:Glob` | 知道工具名稱時直接選取 |
+| 多工具選取 | `select:Read,Edit,Grep` | 一次選取多個 |
 | 關鍵字搜尋 | `"list directory"` | 不確定工具名稱時搜尋 |
 
-### 工具載入流程
+### 真實運作機制（來源：外流原始碼 2.1.88 `utils/toolSearch.ts`）
+
+ToolSearch **不是** 把 schema 文字注入 tool_result，而是透過一套 **beta API 機制**運作：
 
 ```
-Claude 需要某工具
+tools[] 中的 deferred 工具標記 defer_loading: true
     ↓
-ToolSearch("select:ToolName")   ← 將工具 schema 載入 context
+Claude 呼叫 ToolSearch("select:ToolName")
     ↓
-直接呼叫 ToolName(...)
+API 在 tool_result 中返回 tool_reference 區塊
+    ↓
+{ type: 'tool_reference', tool_name: 'ToolName' }
+    ↓
+API server-side 展開成完整 schema 讓 Claude 看到
+    ↓
+Claude 直接呼叫 ToolName(...)
 ```
+
+**關鍵**：`tool_reference` 是 Anthropic beta API 功能，由伺服器端展開，不進入 JSONL 的標準欄位，所以我們的 session JSONL 中 ToolSearch tool_result 顯示為空——實際上有內容，只是 beta 格式解析器未覆蓋。
+
+### tools[] 陣列始終穩定
+
+deferred 工具「始終在 `tools[]` 中」，只是帶有 `defer_loading: true`：
+
+```typescript
+// tools[] 從 session 開始到結束結構不變
+tools: [
+  { name: 'Bash', ... },           // pre-loaded，完整 schema
+  { name: 'Read', ... },           // pre-loaded，完整 schema
+  { name: 'SomeMCPTool',           // deferred
+    defer_loading: true, ... },
+]
+```
+
+這就是為什麼 ToolSearch 前後 **KV cache 不 bust**（JSONL 驗證：`6370316b`，cache_read 單調遞增）：tools[] 結構穩定，prompt cache 不受影響。
+
+### toolSchemaCache（來源：`utils/toolSchemaCache.ts`）
+
+> "Tool schemas render at server position 2 (before system prompt), so any byte-level change busts the entire ~11K-token tool block AND everything downstream."
+
+工具 schema 在 KV cache 中排在 **system prompt 之前（position 2）**。任何 schema 變動都會 bust 整個 tool block + 下游所有 messages 的 cache。因此 Claude Code 用 `toolSchemaCache` 把 schema 在 session 內 memoize，防止 GrowthBook gate flip 或 MCP 重連造成不必要的 cache bust。
 
 ### 有效範圍
 
-- **同一 session**：載入一次後可直接呼叫，不需重複 ToolSearch
-- **跨 session**：每次新對話都要重新載入，context 不跨 session 保留
+- **同一 session**：`tool_reference` 已在 message history → 下一輪 API 呼叫時 server 知道已發現，可直接使用
+- **跨 session**：history 清空，需重新 ToolSearch
 
-### 效率影響
+### ToolSearchMode 三種模式（來源：`utils/toolSearch.ts:161`）
 
-每次 ToolSearch = 多一次 tool call + 多一次 LLM 推理（約 2~3 秒）。預載工具省去此步驟。
+```ts
+type ToolSearchMode = 'tst' | 'tst-auto' | 'standard'
+```
+
+| mode | 說明 |
+|------|------|
+| `'tst'` | 永遠 defer MCP 與 shouldDefer 工具（always on） |
+| `'tst-auto'` | 只有工具 token 超過閾值才 defer（auto threshold） |
+| `'standard'` | 全部 inline，不 defer，等同停用 ToolSearch |
+
+**`ENABLE_TOOL_SEARCH` env var 對應邏輯**（`getToolSearchMode()`）：
+
+| 值 | 模式 |
+|----|------|
+| 未設定（預設） | `tst`（永遠 defer） |
+| `true` | `tst` |
+| `false` | `standard` |
+| `auto` | `tst-auto`（預設 10% 閾值） |
+| `auto:N`（N=0） | `tst`（0% = 永遠啟用） |
+| `auto:N`（N=1-99） | `tst-auto`（N% 閾值） |
+| `auto:N`（N=100） | `standard`（100% = 永遠停用） |
+
+**Auto-threshold 計算**：預設 context window 的 **10%**；可透過 GrowthBook 覆蓋（無需改 code）。Token 計算先呼叫 token counting API，失敗時退回 **chars ÷ 2.5** 估算。
+
+### ToolSearch 停用條件（優先序由高到低）
+
+| 條件 | 行為 | 來源 |
+|------|------|------|
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=true` | 強制 `standard`，不論其他設定 | `toolSearch.ts:181` |
+| `ENABLE_TOOL_SEARCH=false` / `auto:100` | `standard` | `toolSearch.ts:196` |
+| 非 first-party `ANTHROPIC_BASE_URL` 且未明確設定 `ENABLE_TOOL_SEARCH` | 停用（見下方）| `toolSearch.ts:299-311` |
+| Haiku 模型（或 GrowthBook `tengu_tool_search_unsupported_models` 清單） | 不支援 `tool_reference` | `toolSearch.ts:204` |
+
+**第三方 proxy 的特別邏輯**（重要）：
+
+`tool_reference` 是 Anthropic beta 功能，許多第三方 API proxy（`ANTHROPIC_BASE_URL` 指向非官方端點）不支援，會回傳 400。因此，若：
+- `ENABLE_TOOL_SEARCH` **未明確設定**（空字串或未設）
+- 且 API provider 是 `'firstParty'`（即不是 Bedrock/Vertex）
+- 但 `ANTHROPIC_BASE_URL` 不是 first-party Anthropic 主機
+
+則 `isToolSearchEnabledOptimistic()` 返回 `false`，停用 ToolSearch。
+
+**若你的 proxy 支援 tool_reference**（如 LiteLLM passthrough、Cloudflare AI Gateway）：設定 `ENABLE_TOOL_SEARCH=true` 或 `auto` 即可重新啟用，明確設定代表用戶聲明 proxy 支援。
+
+**Haiku 不支援的機制**：透過 `getFeatureValue_CACHED_MAY_BE_STALE('tengu_tool_search_unsupported_models', null)` 從 GrowthBook 取得清單，預設為 `['haiku']`，可線上更新不需改 code。
 
 ---
 
@@ -569,27 +706,33 @@ Explore(List files in project)
 
 Claude Code 支援在特定事件觸發時自動執行 shell 命令或 LLM prompt。
 
-### 支援的事件（來源：binary `2.1.72`）
+### 支援的事件（來源：外流原始碼 2.1.88 `utils/hooks.ts` 確認）
 
-| 事件 | 說明 |
-|------|------|
-| `PreToolUse` | 工具呼叫前 |
-| `PostToolUse` | 工具呼叫成功後 |
-| `PostToolUseFailure` | 工具呼叫失敗後 |
-| `UserPromptSubmit` | 使用者送出訊息時 |
-| `Notification` | 收到通知時 |
-| `SessionStart` / `SessionEnd` | session 開始/結束 |
-| `Stop` | Claude 停止回應時 |
-| `SubagentStart` / `SubagentStop` | subagent 啟動/停止 |
-| `PreCompact` | context 壓縮前 |
-| `PermissionRequest` | 權限確認請求時 |
-| `Setup` | 初始化時 |
-| `TeammateIdle` | teammate 閒置時 |
-| `TaskCompleted` | 任務完成時 |
-| `Elicitation` / `ElicitationResult` | 資訊蒐集事件 |
-| `ConfigChange` | 設定變更時 |
-| `WorktreeCreate` / `WorktreeRemove` | worktree 建立/移除 |
-| `InstructionsLoaded` | 指令載入時 |
+| 事件 | 觸發時機 | Matcher 依據 |
+|------|---------|------------|
+| `PreToolUse` | 工具呼叫前 | `tool_name` |
+| `PostToolUse` | 工具呼叫成功後 | `tool_name` |
+| `PostToolUseFailure` | 工具呼叫失敗後 | `tool_name` |
+| `PermissionDenied` | 權限被拒絕後 | `tool_name` |
+| `PermissionRequest` | 權限確認請求（headless agent）| `tool_name` |
+| `UserPromptSubmit` | 使用者送出訊息時 | — |
+| `Notification` | 收到通知時 | — |
+| `SessionStart` | session 開始時（startup/resume/clear/compact）| `source` |
+| `SessionEnd` | session 結束時 | `reason` |
+| `Stop` | Claude 停止回應時 | — |
+| `SubagentStart` | subagent 啟動時 | `agent_type` |
+| `SubagentStop` | subagent 停止時 | — |
+| `StopFailure` | Stop 失敗時 | — |
+| `Setup` | 初始化時 | `trigger` |
+| `TeammateIdle` | teammate 閒置時 | — |
+| `TaskCreated` | 任務建立時 | — |
+| `TaskCompleted` | 任務完成時 | — |
+| `Elicitation` | 資訊蒐集事件 | — |
+| `CwdChanged` | 工作目錄變更時 | — |
+| `FileChanged` | 檔案變更時 | — |
+| `WorktreeCreate` | worktree 建立時 | — |
+| `PreCompact` / `PostCompact` | context 壓縮前/後 | — |
+| `ConfigChange` | 設定變更時 | — |
 
 ### Hook 類型（來源：binary schema + 官方文件）
 
@@ -642,15 +785,15 @@ Claude Code 支援在特定事件觸發時自動執行 shell 命令或 LLM promp
 
 ### Hook 的 JSON 輸出控制
 
-來源：官方文件 `hooks`、`hooks-guide`
+來源：外流原始碼 2.1.88 `utils/hooks.ts` `processHookJSONOutput()`（lines 489–688）
 
 **Exit code 語意**（僅 `command` 類型）：
 
-| exit code | 行為 |
-|-----------|------|
-| `0` | 允許，解析 stdout JSON |
-| `2` | **阻斷**，stderr 回傳給 Claude 或顯示給使用者 |
-| 其他 | 非阻斷錯誤（verbose 模式才顯示） |
+| exit code | 行為 | 來源 |
+|-----------|------|------|
+| `0` | 允許，解析 stdout JSON | — |
+| `2` | **阻斷**（`outcome: 'blocking'`），stderr 作為 blockingError 內容 | line 2648 |
+| 其他非零 | 非阻斷錯誤（`outcome: 'non_blocking_error'`），顯示給使用者 | line 2682 |
 
 注意：exit 2 時 stdout JSON 被忽略；不可混用 exit 2 與 JSON。`http` 類型非 2xx = 非阻斷，只能靠 2xx + JSON body 阻斷。
 
@@ -658,21 +801,32 @@ Claude Code 支援在特定事件觸發時自動執行 shell 命令或 LLM promp
 
 | 欄位 | 說明 |
 |------|------|
-| `continue: false` | 立即停止 Claude，不再繼續 |
+| `continue: false` | `preventContinuation = true`，立即停止 |
 | `stopReason` | 停止的原因說明 |
 | `suppressOutput` | 隱藏此 hook 的輸出 |
-| `systemMessage` | 注入 Claude 的 context（下一個 turn 才送出，async hook 也有效） |
-| `additionalContext` | 同上，補充 context |
-| `decision: "block"` + `reason` | 阻斷操作（`PostToolUse`/`Stop`/`UserPromptSubmit` 用） |
+| `systemMessage` | 注入 Claude 的 context |
+| `decision: "approve"` | `permissionBehavior = 'allow'` |
+| `decision: "block"` + `reason` | `permissionBehavior = 'deny'`，`blockingError` = reason |
 
-**事件專屬控制欄位**：
+**事件專屬欄位（`hookSpecificOutput`）**：
 
 | 事件 | 欄位 | 說明 |
 |------|------|------|
-| `PreToolUse` | `hookSpecificOutput.permissionDecision` | `allow`/`deny`/`ask` |
-| `PreToolUse` | `hookSpecificOutput.updatedInput` | 修改工具的輸入參數再執行 |
-| `PermissionRequest` | `hookSpecificOutput.decision.behavior` | 同上，針對權限請求 |
-| `WorktreeCreate` | stdout 純文字 | 指定 worktree 建立路徑 |
+| `PreToolUse` | `permissionDecision: 'allow'\|'deny'\|'ask'` | 覆蓋 decision 的更細粒度控制 |
+| `PreToolUse` | `permissionDecisionReason` | 理由字串 |
+| `PreToolUse` | `updatedInput` | 修改工具的輸入參數再執行 |
+| `PreToolUse` | `additionalContext` | 補充 context |
+| `PostToolUse` | `additionalContext` | 補充 context |
+| `PostToolUse` | `updatedMCPToolOutput` | 覆蓋 MCP tool 的輸出 |
+| `UserPromptSubmit` | `additionalContext` | 補充 context |
+| `SessionStart` | `additionalContext` | 補充 context |
+| `SessionStart` | `initialUserMessage` | 注入初始使用者訊息 |
+| `SessionStart` | `watchPaths` | 要監聽的路徑列表 |
+| `PermissionRequest` | `decision.behavior: 'allow'\|'deny'` | headless agent 的權限決定 |
+| `PermissionRequest` | `decision.updatedInput` | 允許並修改輸入 |
+| `PermissionDenied` | `retry` | 是否重試 |
+| `Elicitation` | `action: 'accept'\|'decline'` | 資訊蒐集結果 |
+| `WorktreeCreate` | `worktreePath` | 指定 worktree 建立路徑 |
 
 ### Stop hook 無限迴圈防護
 
@@ -718,6 +872,18 @@ Matcher 是 regex 字串，決定哪些 hook 在此事件觸發：
 **Hook 快照**：Claude Code 在 session 啟動時抓取 hooks 快照。session 進行中對 settings 檔的修改不立即生效，需在 `/hooks` 選單審閱後才套用（防止惡意修改 hook）。
 
 來源：官方文件 `hooks`、`hooks-guide`
+
+### Hook Timeout 數值（來源：`utils/hooks.ts:166-181`）
+
+| Hook 類型 | 預設 Timeout | 說明 |
+|----------|-------------|------|
+| 工具相關（PreToolUse/PostToolUse/Stop 等） | **10 分鐘**（600,000 ms） | 個別 hook 可用 `timeout` 欄位（秒數）覆蓋 |
+| Session end（SessionEnd）| **1.5 秒**（1,500 ms） | 刻意非常短；可用 `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS` env var 覆蓋 |
+
+**注意**：SessionEnd timeout 極短（1.5 秒），如果 Stop hook 裡做複雜操作（如 commit + push）很可能 timeout。若需較長時間，設定：
+```bash
+export CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=30000  # 30 秒
+```
 
 ### Hook 在 JSONL 中的記錄
 
@@ -784,3 +950,282 @@ keep-coding-instructions: true  # 保留預設的程式碼驗證指令（預設 
 ### 設定方式
 
 `/config > Output style` 選取，儲存至 `.claude/settings.local.json`。
+
+---
+
+## MCP Server 初始化流程（T12）
+
+來源：外流原始碼 2.1.88 `main.tsx`（4,690 行）
+
+### 初始化時序
+
+MCP 配置載入在啟動早期作為非阻塞 Promise 啟動（main.tsx:1805）：
+
+```
+[啟動階段]
+  ↓
+getClaudeCodeMcpConfigs() → mcpConfigPromise（非阻塞）
+  ↓ （等待 trust dialog 後）
+prefetchAllMcpResources(regularMcpConfigs) → localMcpPromise
+prefetchAllMcpResources(claudeaiConfigs)   → claudeaiMcpPromise（可選）
+  ↓
+Promise.all → { clients, tools, commands }（合併去重）
+```
+
+### 兩種 MCP 配置類型
+
+| 類型 | type 欄位 | 說明 |
+|------|-----------|------|
+| regular (`ScopedMcpServerConfig`) | 非 `'sdk'` | 一般 MCP server（stdio/sse） |
+| SDK (`McpSdkServerConfig`) | `'sdk'` | SDK 整合的特殊配置 |
+
+啟動時按 `type === 'sdk'` 分離，分別處理。
+
+### 特殊條件
+
+- `--strict-mcp-config` 或 `--bare` 模式：直接返回空 servers
+- `isNonInteractiveSession`（SDK/print 模式）：直接返回空 clients/tools/commands（跳過 MCP prefetch）
+- tools 和 commands 以 name 去重（`uniqBy`）
+
+### 工具合併注意
+
+MCP tools 加入 tool pool 時以 `uniqBy(name)` 去重；在 `assembleToolPool()` 中，built-in tools 排字母序為前綴，MCP tools 排字母序附後（cache 穩定性設計）。
+
+## Tool 定義與載入（T10）
+
+來源：外流原始碼 2.1.88 `Tool.ts`（792 行）、`tools.ts`（389 行）、`constants/tools.ts`（112 行）
+
+### Tool 介面完整欄位
+
+`Tool<Input, Output, P>` 類型定義（Tool.ts:362）主要欄位：
+
+| 欄位 | 必填 | 說明 |
+|------|------|------|
+| `name` | ✓ | 工具名稱（唯一識別） |
+| `aliases?` | — | 向後相容的舊名稱列表 |
+| `searchHint?` | — | 供 ToolSearch 關鍵字匹配的 3-10 字提示 |
+| `shouldDefer?` | — | `true` = deferred 工具（需先 ToolSearch 才能呼叫） |
+| `alwaysLoad?` | — | `true` = 永不 defer，即使 ToolSearch 啟用也在 turn 1 載入 |
+| `maxResultSizeChars` | ✓ | tool result 外部儲存閾值；`Infinity` = 永不外部儲存 |
+| `strict?` | — | 啟用 API strict mode（需 feature flag `tengu_tool_pear`） |
+| `inputSchema` | ✓ | Zod schema（用於參數驗證） |
+| `inputJSONSchema?` | — | MCP 工具可直接提供 JSON Schema（不走 Zod） |
+| `isMcp?` | — | MCP 工具標記 |
+| `mcpInfo?` | — | `{ serverName, toolName }`，MCP 工具的伺服器來源 |
+
+**必實作的方法**：`call()`, `prompt()`, `isConcurrencySafe()`, `isEnabled()`, `isReadOnly()`, `mapToolResultToToolResultBlockParam()`, `renderToolUseMessage()`, `userFacingName()`, `toAutoClassifierInput()`
+
+### Pre-loaded vs Deferred 區分
+
+| 旗標 | 說明 |
+|------|------|
+| `shouldDefer: true` | Deferred tool；API 端以 `defer_loading: true` 傳送；模型必須先呼叫 ToolSearch 才能使用 |
+| `alwaysLoad: true` | 永不 defer，MCP 工具可透過 `_meta['anthropic/alwaysLoad']` 設定 |
+| 兩者皆無 | ToolSearch 停用時：pre-loaded；ToolSearch 啟用時：依 ToolSearch 邏輯決定 |
+
+### `buildTool()` 工廠函式
+
+Tool.ts:783。提供安全預設值（fail-closed where it matters），所有工具定義應透過此函式建構：
+
+| 方法 | 預設值 |
+|------|--------|
+| `isEnabled()` | `true` |
+| `isConcurrencySafe()` | `false` |
+| `isReadOnly()` | `false` |
+| `isDestructive()` | `false` |
+| `checkPermissions()` | `{ behavior: 'allow', updatedInput }` |
+| `toAutoClassifierInput()` | `''`（跳過安全分類器） |
+| `userFacingName()` | tool `name` |
+
+### Tool 執行結果結構
+
+`ToolResult<T>`（Tool.ts:321）：
+
+```ts
+type ToolResult<T> = {
+  data: T                        // 主要 output
+  newMessages?: Message[]        // 附帶新增的訊息（如 subagent 回傳）
+  contextModifier?: (ctx: ToolUseContext) => ToolUseContext  // 非並發安全工具可修改 context
+  mcpMeta?: {                    // MCP 協定 metadata
+    _meta?: Record<string, unknown>
+    structuredContent?: Record<string, unknown>
+  }
+}
+```
+
+### 工具清單（getAllBaseTools()，tools.ts:193）
+
+**核心工具（外部版本）**：AgentTool, TaskOutputTool, BashTool, GlobTool, GrepTool（無內建 search 時）, ExitPlanModeV2Tool, FileReadTool, FileEditTool, FileWriteTool, NotebookEditTool, WebFetchTool, TodoWriteTool, WebSearchTool, TaskStopTool, AskUserQuestionTool, SkillTool, EnterPlanModeTool
+
+**ANT-ONLY 工具**（外部版本 dead-code-eliminated）：ConfigTool, TungstenTool, REPLTool
+
+**Feature-gated 工具**：WebBrowserTool, ToolSearchTool（`isToolSearchEnabledOptimistic()`）, TaskCreateTool/TaskGetTool/TaskUpdateTool/TaskListTool（`isTodoV2Enabled()`）, EnterWorktreeTool/ExitWorktreeTool（`isWorktreeModeEnabled()`）, SleepTool, MonitorTool, WorkflowTool 等
+
+**注意**：工具集需與 Statsig `claude_code_global_system_caching` 保持同步（tools.ts:191 注釋）。
+
+### Subagent 工具限制清單（constants/tools.ts）
+
+| 集合 | 說明 |
+|------|------|
+| `ALL_AGENT_DISALLOWED_TOOLS` | 所有 subagent 禁用：TaskOutputTool, ExitPlanModeTool, EnterPlanModeTool, AgentTool（非 ANT）, AskUserQuestionTool, TaskStopTool |
+| `ASYNC_AGENT_ALLOWED_TOOLS` | 非同步 agent 允許：Read/Search/Edit/Skill/ToolSearch/Worktree 類 |
+| `IN_PROCESS_TEAMMATE_ALLOWED_TOOLS` | In-process teammate 專用：Task* tools, SendMessage, Cron tools |
+| `COORDINATOR_MODE_ALLOWED_TOOLS` | Coordinator 模式：AgentTool, TaskStopTool, SendMessage, SyntheticOutput |
+
+**ANT 特權**：ANT 環境允許 nested agents（`AgentTool` 從 `ALL_AGENT_DISALLOWED_TOOLS` 排除）。
+
+### ToolUseContext 完整結構（Tool.ts:158）
+
+工具執行時傳入的完整上下文：
+
+**options 欄位**（不可變）：`tools`, `mainLoopModel`, `thinkingConfig`, `commands`, `mcpClients`, `isNonInteractiveSession`, `refreshTools?`
+
+**狀態存取**：
+- `getAppState()` / `setAppState()`: 全域 App 狀態；subagent 的 `setAppState` 可能是 no-op
+- `setAppStateForTasks?`: Session-scope 狀態更新，永遠到達 root store（即使 subagent）
+
+**識別欄位**：
+- `agentId?`: 僅 subagent 設定；主執行緒為 `undefined`
+- `agentType?`: Subagent 類型名稱
+
+**資源欄位**：
+- `abortController`: 取消信號
+- `readFileState`: 文件讀取 LRU cache
+- `messages`: 當前對話歷史（隨每輪更新）
+- `contentReplacementState?`: Tool result 外部儲存替換紀錄
+- `localDenialTracking?`: Async subagent 本地 denial 計數（因 setAppState 是 no-op）
+
+---
+
+## Context 結構（T14）
+
+來源：外流原始碼 2.1.88 `context.ts`（189 行）
+
+**注意**：`context.ts` 管理的是 **system prompt 動態 context 組裝**（git 狀態、CLAUDE.md 內容），不是 `ToolUseContext`（Tool.ts 已記錄）。
+
+### getUserContext()
+
+```ts
+export const getUserContext = memoize(async () => {
+  return {
+    claudeMd,           // CLAUDE.md 內容（若有）
+    currentDate: "Today's date is YYYY-MM-DD.",
+  }
+})
+```
+
+- **memoized**：session 期間只呼叫一次；快取在 module level
+- **CLAUDE.md 條件**：
+  - `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`：強制關閉
+  - `--bare` 模式 + 無 `--add-dir`：關閉（bare 模式只忽略自動發現，不忽略明確指定）
+- `setCachedClaudeMdContent()`: 同時快取供 yoloClassifier 讀取（避免 import cycle）
+- 結果用作 `userContext`，以 `<userContext>` XML tag 形式注入 system prompt 動態部分
+
+### getSystemContext()
+
+```ts
+export const getSystemContext = memoize(async () => {
+  return {
+    gitStatus,      // git 狀態（若為 git repo 且未停用）
+    cacheBreaker,   // ANT-ONLY debug cache breaking
+  }
+})
+```
+
+- **跳過 git status 的條件**：
+  - `CLAUDE_CODE_REMOTE=1`（CCR 環境，避免不必要開銷）
+  - `shouldIncludeGitInstructions()` 返回 false
+
+### getGitStatus()
+
+memoized async function，平行執行以下 git 命令：
+
+```
+git status --short   → truncated at 2000 chars
+git log --oneline -n 5
+git config user.name
+```
+
+plus `getBranch()` and `getDefaultBranch()`
+
+注入到 system prompt 的文字格式：
+```
+This is the git status at the start of the conversation. Note that this status is a snapshot in time...
+Current branch: {branch}
+Main branch (you will usually use this for PRs): {mainBranch}
+Git user: {userName}
+Status: {status}
+Recent commits: {log}
+```
+
+**截斷**：超過 2000 字元時截斷並附上提示（可用 BashTool 執行 git status 取得完整輸出）
+
+### systemPromptInjection（ANT-ONLY debug）
+
+feature gate: `BREAK_CACHE_COMMAND`。`setSystemPromptInjection(value)` 更新注入並立即清除 memoize cache，讓下次呼叫重新計算含新注入的 context。
+
+---
+
+## Task 類型定義（T15）
+
+來源：外流原始碼 2.1.88 `Task.ts`（125 行）、`tasks.ts`（39 行）
+
+### Task vs Agent 的關係
+
+**Task ≠ Agent 工具**。`Task.ts` 定義的是**後台工作任務**（background task workers），不是 Agent 工具。AgentTool 會創建一個 `local_agent` 類型的 Task，但 Task 系統本身更廣。
+
+### TaskType 枚舉
+
+| type | 前綴 | 說明 |
+|------|------|------|
+| `local_bash` | `b` | 本地 Bash 命令（LocalShellTask） |
+| `local_agent` | `a` | 本地 agent（AgentTool 的後台代理） |
+| `remote_agent` | `r` | 遠端 agent |
+| `in_process_teammate` | `t` | In-process teammate（協作模式） |
+| `local_workflow` | `w` | 本地 workflow（feature gate: WORKFLOW_SCRIPTS） |
+| `monitor_mcp` | `m` | MCP monitor（feature gate: MONITOR_TOOL） |
+| `dream` | `d` | Dream task |
+
+### TaskStatus 狀態機
+
+```
+pending → running → completed
+                  → failed
+                  → killed
+```
+
+`isTerminalTaskStatus()`: `completed` | `failed` | `killed` 為終態，後續不再轉換。
+
+### TaskStateBase 共享欄位
+
+```ts
+type TaskStateBase = {
+  id: string           // 前綴字母 + 8 位 base-36 隨機字串（2.8 兆組合）
+  type: TaskType
+  status: TaskStatus
+  description: string
+  toolUseId?: string   // 關聯的 tool_use block ID
+  startTime: number
+  endTime?: number
+  totalPausedMs?: number
+  outputFile: string   // 輸出檔案路徑（task output 暫存）
+  outputOffset: number // 已讀取的輸出偏移量
+  notified: boolean    // 是否已通知使用者
+}
+```
+
+### Task 介面（kill 方法）
+
+```ts
+type Task = {
+  name: string
+  type: TaskType
+  kill(taskId: string, setAppState: SetAppState): Promise<void>
+}
+```
+
+spawn/render 方法已在 #22546 移除（不再需要多態呼叫）。
+
+### tasks.ts 工廠
+
+`getAllTasks()` / `getTaskByType(type)` — 與 `getAllBaseTools()` 相同的 registry 模式。可用 task: LocalShellTask, LocalAgentTask, RemoteAgentTask, DreamTask, LocalWorkflowTask（WORKFLOW_SCRIPTS）, MonitorMcpTask（MONITOR_TOOL）。

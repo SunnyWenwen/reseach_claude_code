@@ -13,29 +13,31 @@
 
 來源：binary `2.1.76`（minified 函式名），並以 `2.1.88` 外流原始碼（readable 函式名）交叉比對。
 
-### 組裝函式（`dj()` in 2.1.76 / 對應 2.1.88 readable 版）
+### 組裝函式（`dj()` in 2.1.76 / `getSystemPrompt()` in 2.1.88）
 
-```js
-// 2.1.76 minified
-async function dj(H, A, $, f) {
-  if (tH(process.env.CLAUDE_CODE_SIMPLE))
-    return [`You are Claude Code, Anthropic's official CLI for Claude.\n\nCWD: ...\nDate: ...`];
+> 來源：外流原始碼 2.1.88 `constants/prompts.ts:444 getSystemPrompt()`（原始碼直接驗證）
 
-  let O = await lF8(P);   // 動態 section（非同步）
-
-  return [
-    Ws6(L),     // getSimpleIntroSection       — 開頭
-    js6(K),     // getSimpleSystemSection       — # System
-    L === null || L.keepCodingInstructions === true ? Es6() : null,  // # Avoid over-engineering
-    Ts6(),      // getActionsSection            — # Executing actions with care
-    Xs6(K, _),  // getSimpleDoingTasksSection   — # Doing tasks
-    // ⚠️ 2.1.88 新增：getUsingYourToolsSection — # Using your tools
-    Js6(),      // getSimpleToneAndStyleSection — # Tone and style
-    Vs6(),      // getOutputEfficiencySection   — # Output efficiency（feature flag）
-    ...O        // 動態 section
-  ].filter((w) => w !== null);
-}
+```typescript
+// 2.1.88 readable（constants/prompts.ts:560-576）
+return [
+  // --- 靜態內容（可 cache）---
+  getSimpleIntroSection(outputStyleConfig),
+  getSimpleSystemSection(),
+  outputStyleConfig === null || outputStyleConfig.keepCodingInstructions === true
+    ? getSimpleDoingTasksSection()   // Output Style 啟用時省略
+    : null,
+  getActionsSection(),
+  getUsingYourToolsSection(enabledTools),
+  getSimpleToneAndStyleSection(),
+  getOutputEfficiencySection(),
+  // === BOUNDARY MARKER ===
+  ...(shouldUseGlobalCacheScope() ? [SYSTEM_PROMPT_DYNAMIC_BOUNDARY] : []),
+  // --- 動態內容（registry 管理）---
+  ...resolvedDynamicSections,
+].filter(s => s !== null)
 ```
+
+**注意**：Dynamic Boundary 只在 `shouldUseGlobalCacheScope()` 為 true 時才插入，並非每次都有。
 
 ### 靜態 Section（固定順序，以 2.1.88 為準）
 
@@ -60,21 +62,29 @@ __SYSTEM_PROMPT_DYNAMIC_BOUNDARY__
 
 ---
 
-### 動態 Section（非同步載入，`lF8(P)` 處理）
+### 動態 Section（`resolveSystemPromptSections()` 管理）
 
-| key | 函式（minified/readable） | 條件 | 說明 |
-|-----|------|------|------|
-| `memory` | `yjA()` | 有 auto memory 時 | `# auto memory` 含 MEMORY.md 前 200 行 |
-| `ant_model_override` | `Os6()` | 有 model override 時 | 目前使用的模型資訊 |
-| `env_info_simple` | `v7_()` / `computeSimpleEnvInfo` | 常態 | CWD、git、Platform、OS、model 版本、知識截止日等 |
-| `language` | `ws6()` | 有設定語言時 | `# Language` 指示用該語言回應 |
-| `output_style` | `zs6()` | 有 Output Style 時 | `# Output Style: {name}` + 樣式 prompt |
-| `mcp_instructions` | `Ys6()` | 有 MCP server 且有 instructions 時 | `# MCP Server Instructions` |
-| `session_guidance` | `getSessionSpecificGuidanceSection` | 常態（2.1.88 確認）| `# Session-specific guidance`（見下方） |
-| `scratchpad` | `ks6()` | 條件未知 | 暫存區內容 |
-| `frc` | `Ns6()` | 條件未知 | 未知 |
-| `summarize_tool_results` | `vs6` | 條件未知 | 工具結果摘要設定 |
-| `brief` | `hs6()` | 條件未知 | 簡短模式 |
+> 來源：外流原始碼 2.1.88 `constants/prompts.ts:491-555`（原始碼直接驗證）
+
+動態 section 分兩種：
+- `systemPromptSection(name, fn)`：**memoized**，計算一次後 cache 直到 `/clear` 或 `/compact`
+- `DANGEROUS_uncachedSystemPromptSection(name, fn, reason)`：**每輪重算**，會 break cache，需附理由
+
+| key | readable 函式 | 類型 | 條件 | 說明 |
+|-----|------|------|------|------|
+| `session_guidance` | `getSessionSpecificGuidanceSection` | memoized | 常態 | `# Session-specific guidance` |
+| `memory` | `loadMemoryPrompt` | memoized | 有 auto memory 時 | `# auto memory` 含 MEMORY.md |
+| `ant_model_override` | `getAntModelOverrideSection` | memoized | 有 model override 時 | 目前使用的模型資訊 |
+| `env_info_simple` | `computeSimpleEnvInfo` | memoized | 常態 | CWD、git、Platform、OS、model 版本、知識截止日等 |
+| `language` | `getLanguageSection` | memoized | 有設定語言時 | `# Language` 指示用該語言回應 |
+| `output_style` | `getOutputStyleSection` | memoized | 有 Output Style 時 | `# Output Style: {name}` + 樣式 prompt |
+| `mcp_instructions` | `getMcpInstructionsSection` | **DANGEROUS（每輪重算）** | 有 MCP server 時 | MCP 連線/斷線會 break cache；理由：`'MCP servers connect/disconnect between turns'` |
+| `scratchpad` | `getScratchpadInstructions` | memoized | scratchpad 啟用時 | 暫存區內容 |
+| `frc` | `getFunctionResultClearingSection` | memoized | 條件依 model | Function result clearing 說明 |
+| `summarize_tool_results` | `SUMMARIZE_TOOL_RESULTS_SECTION` | memoized | 常態 | 工具結果摘要設定 |
+| `numeric_length_anchors` | — | memoized | `USER_TYPE=ant` | 字數限制提示（ant 內部限定）|
+| `token_budget` | — | memoized | feature flag `TOKEN_BUDGET` | Token budget 說明 |
+| `brief` | `getBriefSection` | memoized | feature flag `KAIROS`/`KAIROS_BRIEF` | 簡短模式 |
 
 ### Output Style 對 system prompt 的影響
 
