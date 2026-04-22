@@ -1229,3 +1229,107 @@ spawn/render 方法已在 #22546 移除（不再需要多態呼叫）。
 ### tasks.ts 工廠
 
 `getAllTasks()` / `getTaskByType(type)` — 與 `getAllBaseTools()` 相同的 registry 模式。可用 task: LocalShellTask, LocalAgentTask, RemoteAgentTask, DreamTask, LocalWorkflowTask（WORKFLOW_SCRIPTS）, MonitorMcpTask（MONITOR_TOOL）。
+
+---
+
+## CLAUDE.md 與 Rules 系統
+
+來源：官方文件 `memory`（2026-04-14）
+
+### CLAUDE.md 載入機制
+
+CLAUDE.md 內容作為**用戶訊息**附加在 system prompt 之後（非 system prompt 本身）。Claude 讀取後盡量遵守，但不是強制執行的設定。
+
+**載入順序**：從當前工作目錄向上走訪目錄樹，每層的 `CLAUDE.md` 和 `CLAUDE.local.md` 都會被載入並串接（不互相覆蓋）。子目錄的 CLAUDE.md 則在 Claude 讀取該子目錄檔案時才按需載入。
+
+**優先級（由低到高）**：
+```
+Managed Policy（/etc/claude-code/CLAUDE.md）
+User（~/.claude/CLAUDE.md）
+Project（./CLAUDE.md 或 ./.claude/CLAUDE.md）
+Local（./CLAUDE.local.md，不進版控）
+```
+
+同層內 `CLAUDE.local.md` 附加在 `CLAUDE.md` 之後，個人備註優先級較高。
+
+**Import 語法**：CLAUDE.md 可用 `@path/to/file` 引入其他檔案，最多遞迴 5 層。
+
+### `.claude/rules/` — 模組化規則系統
+
+#### 核心概念
+
+Rules 是 `.claude/rules/` 目錄下的 Markdown 檔案，功能等同 CLAUDE.md 的補充，但支援**依檔案路徑條件載入**，減少無關內容佔用 context。
+
+#### 目錄結構
+
+```
+.claude/
+├── CLAUDE.md
+└── rules/
+    ├── code-style.md     # 無 paths → 每次 session 都載入
+    ├── testing.md
+    └── api-design.md     # 有 paths → 只在讀取符合檔案時載入
+```
+
+支援子目錄（如 `rules/frontend/`、`rules/backend/`），`.md` 遞迴探索。
+
+#### 兩種規則類型
+
+**無條件規則**（無 frontmatter）：每次 session 啟動即載入，與 `.claude/CLAUDE.md` 同等優先級。
+
+**Path-specific 規則**（有 `paths` frontmatter）：只在 Claude 讀取符合路徑的檔案時才載入 context。
+
+```markdown
+---
+paths:
+  - "src/api/**/*.ts"
+  - "src/**/*.{ts,tsx}"
+---
+
+# API Development Rules
+- All endpoints must include input validation
+```
+
+| Pattern | 匹配對象 |
+|---------|----------|
+| `**/*.ts` | 所有 TypeScript 檔案 |
+| `src/**/*` | src/ 下所有檔案 |
+| `*.md` | 根目錄 Markdown 檔案 |
+| `src/components/*.tsx` | 指定目錄的 React 元件 |
+
+注意：path-scoped rules 在 Claude **讀取符合檔案時**觸發，不是每次工具呼叫都觸發。
+
+#### User-level Rules
+
+`~/.claude/rules/` 對所有專案生效（個人偏好）。載入順序：user rules 先載入，project rules 後載入（project 優先級較高）。
+
+#### Symlink 支援
+
+`.claude/rules/` 支援 symlink，可跨專案共享規則集：
+```bash
+ln -s ~/shared-rules .claude/rules/shared
+```
+
+### CLAUDE.md vs Rules vs Skills 比較
+
+| 機制 | 載入時機 | 適用場景 |
+|------|----------|----------|
+| `CLAUDE.md` | 每次 session 啟動（全載） | 全域指令、架構說明 |
+| `.claude/rules/`（無 paths） | 每次 session 啟動 | 模組化管理常駐指令 |
+| `.claude/rules/`（有 paths） | 讀取符合檔案時 | 特定語言/目錄的規範 |
+| Skills | 明確呼叫或 LLM 判斷相關時 | 特定任務的工作流程步驟 |
+
+### claudeMdExcludes
+
+大型 monorepo 中可排除不相關的 CLAUDE.md，設定於 `.claude/settings.local.json`：
+
+```json
+{
+  "claudeMdExcludes": [
+    "**/other-team/CLAUDE.md",
+    "/home/user/monorepo/other-team/.claude/rules/**"
+  ]
+}
+```
+
+Managed Policy CLAUDE.md 無法被排除。

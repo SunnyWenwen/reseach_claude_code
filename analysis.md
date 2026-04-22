@@ -17,6 +17,8 @@
 - **Task 類型定義**：Task ≠ AgentTool；TaskType 七種（local_bash/local_agent/remote_agent/in_process_teammate/local_workflow/monitor_mcp/dream）；TaskStatus 狀態機；TaskStateBase 共享欄位（id/type/status/outputFile/outputOffset/notified）；Task ID 格式（前綴 + 8 位 base-36）；getAllTasks() registry 模式
 - **Skill 系統**：SKILL.md 結構、觸發方式、動態注入；執行模式（注入/腳本/agent/fork）；Priority 順序（Enterprise > Personal > Project > Plugin）
 - **Output Styles**：直接替換 system prompt（非附加）；三種內建樣式；自訂樣式 frontmatter；下次新 session 才生效
+- **CLAUDE.md 載入機制**：作為用戶訊息附加（非 system prompt）；目錄樹向上走訪；子目錄按需載入；`@path` import 語法；優先級順序（Managed Policy > User > Project > Local）
+- **Rules 系統（`.claude/rules/`）**：模組化 CLAUDE.md；無條件規則 vs path-specific 規則（frontmatter `paths`）；User-level rules；symlink 支援；`claudeMdExcludes` 排除設定；vs Skills 比較
 - **Skill allowed-tools vs Agent 工具權限**：差異與設計原因
 - **Agent 工具**：subagent_type 選項、特性、IPC 通訊協議、memory 目錄
 - **Hooks**：事件清單（21 種）、command/http/prompt/agent 四種類型及其 schema；JSON 輸出控制欄位；Stop hook 無限迴圈防護（`stop_hook_active`）；ConfigChange 審計；Matcher 機制；快照機制；**Timeout 數值：工具 hook 10 分鐘 / SessionEnd 1.5 秒**（CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS 可覆蓋）
@@ -29,10 +31,10 @@
 - **Bash 匹配邏輯**：prefix/exact/wildcard 三種規則類型；複合命令不匹配 prefix（防越獄設計）；rule content escaping
 - **DANGEROUS_BASH_PATTERNS**：直譯器/shell/套件執行器黑名單；ANT-ONLY 追加項（gh/curl/kubectl 等）
 - **權限決策完整流程**：`hasPermissionsToUseToolInner()` 9 步驟（deny→ask→checkPermissions→bypass-immune→bypassPermissions→allow rule）
-- **Auto Mode 分類器**：TRANSCRIPT_CLASSIFIER（yoloClassifier）兩階段 XML 分類；bashClassifier 為 ANT-ONLY stub；用戶可透過 `settings.autoMode` 自訂規則
+- **Auto Mode 分類器**：外部用戶可用（v2.1.83+，需 Max/Team/Enterprise/API 方案 + 特定模型）；yoloClassifier 兩階段 XML 分類；bashClassifier 為獨立 ANT-ONLY stub；分類器看不到 tool results（防 injection）；連續 3 次或總計 20 次封鎖 → fallback；進入 auto mode 時移除寬鬆 allow rules；`settings.autoMode` 可自訂
 - **Permission Modes**：acceptEdits/bypassPermissions/dontAsk/plan/default/auto 六種模式；與 allow 規則的差異
 - **規則來源與 Legacy 別名**：8 種 PermissionRuleSource；Task→Agent 等歷史別名自動正規化
-- **Permission Mode 完整定義**：7 種 mode（default/plan/acceptEdits/bypassPermissions/dontAsk/auto/bubble）；auto 和 bubble 為 ANT-ONLY；ExternalPermissionMode 排除 internal modes；toExternalPermissionMode() 映射；permissionModeSchema Zod schema
+- **Permission Mode 完整定義**：7 種 mode（default/plan/acceptEdits/bypassPermissions/dontAsk/auto/bubble）；bubble 為 ANT-ONLY；auto 外部可用但需資格；ExternalPermissionMode 對非 ANT 用戶含 auto；toExternalPermissionMode() 映射；permissionModeSchema Zod schema
 
 ## [session.md](session.md) — Session 記錄
 

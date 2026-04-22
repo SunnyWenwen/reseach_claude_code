@@ -115,7 +115,15 @@ JSONL 無法還原「是否曾詢問過確認」。
 
 ## Auto Mode 分類器（TRANSCRIPT_CLASSIFIER / Yolo Classifier）
 
-來源：外流原始碼 2.1.88 `utils/permissions/yoloClassifier.ts`、`utils/permissions/bashClassifier.ts`
+來源：外流原始碼 2.1.88 `utils/permissions/yoloClassifier.ts`、`utils/permissions/bashClassifier.ts`；官方文件 `permission-modes`（2026-04-14）
+
+### 啟用條件（外部用戶）
+
+- **版本**：Claude Code v2.1.83+
+- **方案**：Max、Team、Enterprise、API（Pro 不支援）
+- **模型**：Sonnet 4.6、Opus 4.6、Opus 4.7（Team/Enterprise/API）；Max 方案限 Opus 4.7
+- **Provider**：Anthropic API 限定，Bedrock/Vertex/Foundry 不支援
+- **管理員**：Team/Enterprise 需由 Admin 在 admin settings 中啟用；可透過 `permissions.disableAutoMode: "disable"` 強制關閉
 
 ### bashClassifier.ts：ANT-ONLY 功能，外部版本為 stub
 
@@ -126,7 +134,7 @@ export function isClassifierPermissionsEnabled(): boolean {
 }
 ```
 
-`BASH_CLASSIFIER` feature 在外部版本中完全禁用，所有函式回傳 disabled/空值。外部用戶不會觸發此分類器。
+`BASH_CLASSIFIER` feature 在外部版本中完全禁用。這是 client-side bash 分類器，與 auto mode 的 server-side 分類器（yoloClassifier）是不同的東西。
 
 ### yoloClassifier.ts：Auto Mode 的核心分類器
 
@@ -146,8 +154,60 @@ Stage 1（fast）: max_tokens=256, stop_sequences
 - System prompt 從 `.txt` 文字檔載入（`auto_mode_system_prompt.txt` + `permissions_external.txt` / `permissions_anthropic.txt`）
 - 使用 `cache_control` 在 action block 上設定快取，stage 1/2 共享 prefix → stage 2 可命中 cache
 - 空輸入（`toCompact()` 回傳 `''`）直接允許，不呼叫 API
+- **分類器看到**：user messages、tool calls、CLAUDE.md 內容
+- **分類器看不到**：tool results（避免 prompt injection 操控分類器）
+- server-side 另有獨立 probe 掃描 tool results，發現可疑內容時 flag 給 Claude
 
-**使用者可自訂分類器規則**（`settings.autoMode`）：
+### 決策順序（進入 auto mode 後）
+
+```
+1. allow/deny rules → 直接解決
+2. 讀取操作 + 工作目錄內的檔案編輯（非 protected paths）→ auto-approve，不呼叫分類器
+3. 其他 → 呼叫分類器
+   → 分類器阻擋 → Claude 收到原因，嘗試替代方案
+```
+
+**進入 auto mode 時自動移除的 allow rules**（過於寬鬆的規則）：
+- `Bash(*)` 整體萬用字元
+- `Bash(python*)` 等 interpreter 萬用字元
+- package manager run 命令
+- `Agent` allow rules
+
+窄規則（如 `Bash(npm test)`）保留。離開 auto mode 時恢復。
+
+### 預設封鎖的操作
+
+- `curl | bash` 等下載後執行
+- 將敏感資料送出外部端點
+- Production deploy / migration
+- Cloud storage 大量刪除
+- IAM / repo 權限變更
+- 修改共享基礎設施
+- 破壞 session 開始前就存在的檔案
+- Force push 或直接 push 到 `main`
+
+### 預設允許的操作
+
+- 工作目錄內的本地檔案操作
+- 安裝 lock file / manifest 中宣告的依賴
+- 讀取 `.env` 並將 credentials 送至對應 API
+- 唯讀 HTTP 請求
+- Push 到 session 開始的 branch 或 Claude 建立的 branch
+
+### 對話中的邊界宣告
+
+若使用者在對話中說「don't push」或「wait until I review before deploying」，分類器會將符合的操作視為封鎖信號。邊界持續到使用者在後續訊息中解除。
+
+**注意**：邊界不是規則，分類器每次檢查都從 transcript 重讀。若 `/compact` 壓縮了含邊界的訊息，邊界會消失。需要硬保證請用 `deny rule`。
+
+### Fallback 機制
+
+- 連續封鎖 3 次 OR 總計封鎖 20 次 → auto mode 暫停，恢復詢問
+- 允許一次操作 → 重置連續計數器（總計數器不重置）
+- 總計閾值觸發後，計數器在下次觸發 fallback 時重置
+- Non-interactive mode（`-p`）：重複封鎖直接 abort session
+
+### 使用者可自訂分類器規則（`settings.autoMode`）
 
 ```json
 {
@@ -422,21 +482,23 @@ permission rules 中的舊名稱會自動正規化為現名稱（`normalizeLegac
 | `acceptEdits` | Accept edits | ⏵⏵ | autoAccept | `acceptEdits` | 自動接受檔案編輯，不詢問 |
 | `bypassPermissions` | Bypass Permissions | ⏵⏵ | error | `bypassPermissions` | 繞過所有權限檢查（危險） |
 | `dontAsk` | Don't Ask | ⏵⏵ | error | `dontAsk` | 不詢問，全部自動執行（危險） |
-| `auto` | Auto mode | ⏵⏵ | warning | `default` | **ANT-ONLY**；TRANSCRIPT_CLASSIFIER feature-gated；外部對應 `default` |
+| `auto` | Auto mode | ⏵⏵ | warning | `default` | 需 v2.1.83+、特定方案與模型；分類器 server-side；原始碼 2.1.88 顯示 feature-gated，但官方文件確認外部可用 |
 | `bubble` | — | — | — | （排除） | **ANT-ONLY**；未在 PERMISSION_MODE_CONFIG 中，僅在 `isExternalPermissionMode()` 中提及 |
 
 ### External vs Internal Modes
 
-`ExternalPermissionMode` = 外部可見模式（排除 `auto` 和 `bubble`）：
+`ExternalPermissionMode` = 外部可見模式（排除 `bubble`）：
 
 ```ts
 export function isExternalPermissionMode(mode: PermissionMode): mode is ExternalPermissionMode {
-  if (process.env.USER_TYPE !== 'ant') return true  // 外部用戶全部都是 external mode
+  if (process.env.USER_TYPE !== 'ant') return true  // 外部用戶全部都是 external mode（含 auto）
   return mode !== 'auto' && mode !== 'bubble'
 }
 ```
 
-`toExternalPermissionMode(mode)`: 將 internal mode 映射到 external（`auto` → `default`）。
+注意：外部用戶（非 ant）呼叫此函式對任何 mode（包含 `auto`）都回傳 true，表示 auto 對外部用戶是合法 mode。`toExternalPermissionMode(mode)` 的 `auto` → `default` 映射僅用於 ANT 用戶的 API 回應格式轉換。
+
+來源：外流原始碼 2.1.88；官方文件 `permission-modes`（2026-04-14）
 
 ### Zod Schema
 
