@@ -991,6 +991,28 @@ Promise.all → { clients, tools, commands }（合併去重）
 
 MCP tools 加入 tool pool 時以 `uniqBy(name)` 去重；在 `assembleToolPool()` 中，built-in tools 排字母序為前綴，MCP tools 排字母序附後（cache 穩定性設計）。
 
+### Plugin 提供的 MCP：命名不 namespace（與 Skill 相反）
+
+Plugin 可在 `.mcp.json`（或 `plugin.json` 內 `mcpServers` 欄位）宣告 MCP server。**關鍵差異：plugin 的 MCP server 名稱不會被 plugin 名稱 namespace，Skill 則會。**
+
+| | Skill | Plugin 的 MCP server |
+|--|-------|---------------------|
+| 命名歸屬 | 綁 plugin（`/plugin-name:skill`） | **不綁 plugin**，用作者在 `mcpServers` 自訂的原始 key |
+| 名稱來源 | `plugin.json` 的 `name` 欄位 | `.mcp.json` 裡 `mcpServers` 的 key |
+| 工具呈現 | `/plugin-name:skill` | `mcp__<server-key>__<tool>`（無 plugin 前綴） |
+| 防撞機制 | 框架自動 namespace | **無**，靠作者自律加前綴 |
+
+官方文件（`plugins-reference` → MCP servers）：
+
+> * Plugin MCP servers start automatically when the plugin is enabled
+> * **Servers appear as standard MCP tools** in Claude's toolkit
+
+文件範例將 server 命名為 `plugin-database`、`plugin-api-client`——那是**作者的命名慣例**（手動加前綴避撞），不是框架自動加的。另一佐證：plugin 的 `channels.server` 欄位「must match a key in the plugin's `mcpServers`」，直接用原始 key 引用，無 plugin 前綴。
+
+**實務後果**：兩個 plugin 若宣告同一個 server key（如都叫 `github`），會在 server key 上真正碰撞——因為 MCP 沒有 namespace 保護，必須靠 config 合併規則決定誰勝出（同名只有一個啟動，見「特殊條件」的 `uniqBy` 去重）。**Skill 能靠 `plugin-a:` / `plugin-b:` 自動共存，MCP 不行**，這是 plugin 元件命名的關鍵差異。
+
+來源：官方文件 `plugins-reference`（MCP servers 章節）、`plugins`（skill namespacing）；2026-07-01 查證。
+
 ## Tool 定義與載入（T10）
 
 來源：外流原始碼 2.1.88 `Tool.ts`（792 行）、`tools.ts`（389 行）、`constants/tools.ts`（112 行）
